@@ -1,0 +1,9 @@
+{
+  "private": true,
+  "scripts": {
+    "dev": "npm --prefix web run dev"
+  },
+  "devDependencies": {
+    "supabase": "^2.122.0"
+  }
+}

@@ -1,0 +1,1 @@
+"""Chinese news scraper package."""
