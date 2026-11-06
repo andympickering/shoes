@@ -80,16 +80,14 @@ Open http://localhost:3000
 
 The Next.js app reads the Supabase settings from the repository-root `.env` file.
 
-### 6. GitHub Actions (Daily Scrape)
+### 6. GitHub Actions (Discovery)
 
 Add repo secrets:
 
 - `SUPABASE_URL`
 - `SUPABASE_SERVICE_KEY`
 
-The workflow runs daily at 02:00 UTC. You can also trigger it manually from the Actions tab.
-
-The separate `People's Daily RSS Discovery` workflow checks
+The `People's Daily RSS Discovery` workflow checks
 `https://plink.anyfeeder.com/people-daily` hourly and can also be started
 manually. It records new article URLs, fetches and parses each publisher page,
 then saves non-duplicate articles to `chnscraping_articles`. Discovery records
@@ -119,7 +117,7 @@ several hours. Apply migration 006 before running this workflow.
 ├── search_cli/        # CLI search tool
 ├── web/               # Next.js search UI
 ├── supabase/          # DB migrations
-└── .github/workflows/ # Daily scrape
+└── .github/workflows/ # Discovery workflows
 ```
 
 ## Supported Sites

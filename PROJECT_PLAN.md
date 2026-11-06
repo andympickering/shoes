@@ -34,7 +34,8 @@ The repository already has:
 - A Supabase `chnscraping_articles` table with a unique URL, PGroonga search,
   and a search RPC.
 - A Next.js search page and a Python search CLI.
-- A GitHub Actions workflow scheduled daily at 02:00 UTC, with manual dispatch.
+- Manual scraping can be run locally; automated GitHub Actions workflows are
+  used for RSS and sitemap discovery.
 
 The current scraper discovers links from each source's homepage, processes at
 most 25 URLs per source per run, and inserts articles using URL-only
