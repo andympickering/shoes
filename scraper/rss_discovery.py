@@ -1,20 +1,30 @@
 """Discover People's Daily article URLs from its RSS feed."""
 import sys
+import time
 import xml.etree.ElementTree as ET
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+from urllib.robotparser import RobotFileParser
 
 import requests
 from dotenv import load_dotenv
 from pathlib import Path
 
+from .adapters.base import Article
+from .adapters.people import PeopleAdapter
+
 
 FEED_URL = "https://plink.anyfeeder.com/people-daily"
 SOURCE = "people"
 TABLE = "chnscraping_discovery_records"
+ARTICLES_TABLE = "chnscraping_articles"
 BATCH_SIZE = 50
 TRACKING_PARAMETERS = {"fbclid", "gclid", "dclid", "mc_cid", "mc_eid"}
 ALLOWED_ARTICLE_DOMAINS = ("people.cn", "people.com.cn")
+ARTICLE_USER_AGENT = PeopleAdapter.USER_AGENT
+DEFAULT_CRAWL_DELAY_SECONDS = 3.0
 
 load_dotenv(Path(__file__).resolve().parents[1] / ".env", override=True)
 
@@ -117,6 +127,208 @@ class SupabaseRest:
             existing.update(row["normalized_url"] for row in rows)
         return existing
 
+    def find_pending(self, normalized_urls: list[str]) -> list[dict[str, Any]]:
+        pending: list[dict[str, Any]] = []
+        for start in range(0, len(normalized_urls), BATCH_SIZE):
+            batch = normalized_urls[start : start + BATCH_SIZE]
+            pending.extend(
+                self.request(
+                    "GET",
+                    TABLE,
+                    params={
+                        "select": "id,discovered_url,normalized_url,attempts",
+                        "source": f"eq.{SOURCE}",
+                        "discovery_method": "eq.rss",
+                        "normalized_url": self.in_filter(batch),
+                        "processing_status": "in.(pending,processing,failed)",
+                        "attempts": "lt.3",
+                        "limit": str(BATCH_SIZE),
+                    },
+                )
+            )
+        return pending
+
+
+@dataclass
+class ProcessStats:
+    extracted: int = 0
+    duplicates: int = 0
+    failed: int = 0
+    restricted: int = 0
+    errors: list[str] = field(default_factory=list)
+
+
+def read_robots_policy(
+    session: requests.Session, article_url: str
+) -> tuple[RobotFileParser, float]:
+    parts = urlsplit(article_url)
+    robots_url = urlunsplit((parts.scheme, parts.netloc, "/robots.txt", "", ""))
+    response = session.get(
+        robots_url,
+        headers={"User-Agent": ARTICLE_USER_AGENT},
+        timeout=(15, 60),
+    )
+    if response.status_code == 404:
+        lines: list[str] = []
+    else:
+        response.raise_for_status()
+        if len(response.content) > 1024 * 1024:
+            raise RuntimeError(f"robots.txt exceeded the 1 MiB safety limit: {robots_url}")
+        lines = response.text.splitlines()
+
+    parser = RobotFileParser(robots_url)
+    parser.parse(lines)
+    delay = parser.crawl_delay(ARTICLE_USER_AGENT)
+    return parser, float(delay if delay is not None else DEFAULT_CRAWL_DELAY_SECONDS)
+
+
+def wait_for_crawl_delay(delay_seconds: float, last_request_at: float | None) -> None:
+    if last_request_at is None:
+        return
+    remaining = delay_seconds - (time.monotonic() - last_request_at)
+    if remaining > 0:
+        time.sleep(remaining)
+
+
+def update_discovery_record(supabase: SupabaseRest, record_id: str, **fields: Any) -> None:
+    fields["updated_at"] = utc_now()
+    supabase.request(
+        "PATCH",
+        TABLE,
+        params={"id": f"eq.{record_id}"},
+        payload=fields,
+        prefer="return=minimal",
+    )
+
+
+def save_article(supabase: SupabaseRest, article: Article) -> tuple[str, str]:
+    payload = {
+        "source": SOURCE,
+        "headline": article.headline,
+        "story_text": article.story_text,
+        "url": article.url,
+        "published_at": article.published_at.isoformat() if article.published_at else None,
+        "scraped_at": utc_now(),
+        "metadata": {"discovery_method": "rss"},
+    }
+    inserted = supabase.request(
+        "POST",
+        ARTICLES_TABLE,
+        params={"on_conflict": "url"},
+        payload=[payload],
+        prefer="resolution=ignore-duplicates,return=representation",
+    )
+    if inserted:
+        return "processed", inserted[0]["id"]
+
+    existing = supabase.request(
+        "GET",
+        ARTICLES_TABLE,
+        params={"select": "id", "url": f"eq.{article.url}", "limit": "1"},
+    )
+    if not existing:
+        raise RuntimeError("Article upsert returned no row and no existing article was found")
+    return "duplicate", existing[0]["id"]
+
+
+def process_discoveries(
+    supabase: SupabaseRest,
+    records: list[dict[str, Any]],
+    adapter: PeopleAdapter,
+    robots_session: requests.Session | None = None,
+) -> ProcessStats:
+    stats = ProcessStats()
+    policies: dict[str, tuple[RobotFileParser, float]] = {}
+    last_request_by_origin: dict[str, float] = {}
+    owns_session = robots_session is None
+    session = robots_session or requests.Session()
+
+    try:
+        for record in records:
+            record_id = record["id"]
+            article_url = record["discovered_url"]
+            origin = urlsplit(article_url)
+            origin_key = f"{origin.scheme}://{origin.netloc}"
+
+            try:
+                update_discovery_record(
+                    supabase,
+                    record_id,
+                    processing_status="processing",
+                    attempts=record.get("attempts", 0) + 1,
+                    last_attempt_at=utc_now(),
+                    error_message=None,
+                )
+                if origin_key not in policies:
+                    policies[origin_key] = read_robots_policy(session, article_url)
+                    last_request_by_origin[origin_key] = time.monotonic()
+                robots, delay_seconds = policies[origin_key]
+
+                if not robots.can_fetch(ARTICLE_USER_AGENT, article_url):
+                    update_discovery_record(
+                        supabase,
+                        record_id,
+                        processing_status="restricted",
+                        error_message="robots.txt disallows this article URL",
+                    )
+                    stats.restricted += 1
+                    continue
+
+                wait_for_crawl_delay(delay_seconds, last_request_by_origin[origin_key])
+                last_request_by_origin[origin_key] = time.monotonic()
+                article = adapter._parse_article(article_url)
+                if (
+                    article is None
+                    or not article.headline.strip()
+                    or not article.story_text.strip()
+                    or article.story_text.strip() == article.headline.strip()
+                ):
+                    message = "Article adapter did not extract both a headline and body"
+                    update_discovery_record(
+                        supabase,
+                        record_id,
+                        processing_status="failed",
+                        error_message=message,
+                    )
+                    stats.failed += 1
+                    stats.errors.append(f"{article_url}: {message}")
+                    continue
+
+                status, article_id = save_article(supabase, article)
+                update_discovery_record(
+                    supabase,
+                    record_id,
+                    processing_status=status,
+                    article_id=article_id,
+                    error_message=None,
+                )
+                if status == "processed":
+                    stats.extracted += 1
+                else:
+                    stats.duplicates += 1
+            except Exception as error:
+                message = str(error)[:1000]
+                try:
+                    update_discovery_record(
+                        supabase,
+                        record_id,
+                        processing_status="failed",
+                        error_message=message,
+                    )
+                except Exception as update_error:
+                    print(
+                        f"Could not update failed discovery record {record_id}: {update_error}",
+                        file=sys.stderr,
+                    )
+                stats.failed += 1
+                stats.errors.append(f"{article_url}: {message}")
+                print(f"Article extraction failed for {article_url}: {message}", file=sys.stderr)
+    finally:
+        if owns_session:
+            session.close()
+
+    return stats
+
 
 def read_feed() -> list[tuple[str, str]]:
     response = requests.get(
@@ -147,6 +359,7 @@ def main() -> int:
     job = None
     supabase = None
     inserted_count = 0
+    processed_count = 0
     try:
         supabase = SupabaseRest()
         items = read_feed()
@@ -158,7 +371,7 @@ def main() -> int:
             payload=[
                 {
                     "source": SOURCE,
-                    "job_type": "daily",
+                    "job_type": "hourly",
                     "status": "running",
                     "started_at": timestamp,
                 }
@@ -198,27 +411,36 @@ def main() -> int:
             )
             inserted_count += len(inserted)
 
-        duplicate_count = len(items) - inserted_count
+        records_to_process = supabase.find_pending(urls)
+        adapter = PeopleAdapter(delay_seconds=0, user_agent=ARTICLE_USER_AGENT)
+        stats = process_discoveries(supabase, records_to_process, adapter)
+        processed_count = stats.extracted
+        duplicate_count = len(items) - inserted_count + stats.duplicates
+        job_status = "partial" if stats.failed or stats.restricted else "completed"
         supabase.request(
             "PATCH",
             "chnscraping_crawl_jobs",
             params={"id": f"eq.{job}"},
             payload={
-                "status": "completed",
+                "status": job_status,
                 "discovered_count": len(items),
-                "extracted_count": 0,
+                "extracted_count": stats.extracted,
                 "duplicate_count": duplicate_count,
-                "failed_count": 0,
+                "failed_count": stats.failed,
+                "restricted_count": stats.restricted,
+                "error_summary": "\n".join(stats.errors)[:1000] or None,
                 "completed_at": utc_now(),
                 "updated_at": utc_now(),
             },
             prefer="return=minimal",
         )
         print(
-            f"RSS discovery complete: {len(items)} unique feed URLs, "
-            f"{inserted_count} new discovery records, {duplicate_count} already known."
+            f"RSS discovery {job_status}: {len(items)} unique feed URLs, "
+            f"{inserted_count} new discovery records, {stats.extracted} articles saved, "
+            f"{duplicate_count} duplicates, {stats.failed} failed, "
+            f"{stats.restricted} restricted."
         )
-        return 0
+        return 1 if stats.failed or stats.restricted else 0
     except Exception as error:
         if supabase is not None and job is not None:
             try:
@@ -228,6 +450,8 @@ def main() -> int:
                     params={"id": f"eq.{job}"},
                     payload={
                         "status": "partial" if inserted_count else "failed",
+                        "extracted_count": processed_count,
+                        "failed_count": max(1, inserted_count - processed_count),
                         "error_summary": str(error)[:1000],
                         "completed_at": utc_now(),
                         "updated_at": utc_now(),

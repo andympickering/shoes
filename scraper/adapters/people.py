@@ -14,6 +14,7 @@ class PeopleAdapter(BaseAdapter):
     """Scraper for People's Daily / People.cn (www.people.com.cn)."""
 
     source_id = "people"
+    USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
     LISTING_URLS = [
         "https://www.people.com.cn/",
@@ -25,12 +26,12 @@ class PeopleAdapter(BaseAdapter):
         re.I,
     )
 
-    def __init__(self, delay_seconds: float = 3.0):
+    def __init__(self, delay_seconds: float = 3.0, user_agent: str | None = None):
         self.delay_seconds = delay_seconds
         self.session = requests.Session()
         self.session.headers.update(
             {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "User-Agent": user_agent or self.USER_AGENT,
                 "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
                 "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
             }

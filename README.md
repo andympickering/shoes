@@ -16,6 +16,7 @@ Scrapes Chinese news websites every 24 hours, stores headlines and story text in
    - `supabase/migrations/005_discovery_source_url.sql`
    - `supabase/migrations/006_weekly_crawl_jobs.sql`
    - `supabase/migrations/007_article_relevance_search.sql`
+   - `supabase/migrations/008_hourly_crawl_jobs.sql`
 
 The second migration extends the article records with publisher IDs, content
 fingerprints, and collection timestamps. It also creates URL history, article
@@ -27,6 +28,7 @@ the supporting tables to use the `chnscraping_` prefix as well.
 Migration 005 adds `discovered_from_url` to discovery records to retain the
 sitemap or page where each article URL was found.
 Migration 006 allows weekly sitemap discovery jobs to be recorded distinctly.
+Migration 008 allows hourly RSS discovery jobs to be recorded distinctly.
 Migration 007 adds the article-list RPC used by the web app. It evaluates
 boolean search expressions and ranks matches before pagination. Each matching
 headline occurrence contributes 5 points (up to 5 occurrences); each matching
@@ -89,10 +91,12 @@ The workflow runs daily at 02:00 UTC. You can also trigger it manually from the 
 
 The separate `People's Daily RSS Discovery` workflow checks
 `https://plink.anyfeeder.com/people-daily` hourly and can also be started
-manually. It stores only new article URLs as pending records in
-`chnscraping_discovery_records`; it does not store the RSS full-text content.
-The hourly schedule becomes active after the workflow is committed and pushed
-to the repository's default branch and GitHub Actions is enabled.
+manually. It records new article URLs, fetches and parses each publisher page,
+then saves non-duplicate articles to `chnscraping_articles`. Discovery records
+are linked to the saved article and marked processed; the RSS full-text content
+is not used. The workflow honors each publisher host's `robots.txt` crawl delay,
+so a run with many new articles can take a while. Apply migration 008 before
+running it.
 
 The `People's Daily Sitemap Discovery` workflow scans the sitemap index weekly
 on Sundays at 00:00 UTC and can also be started manually. It discovers article
