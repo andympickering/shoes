@@ -21,7 +21,7 @@ class ScrapePendingTests(unittest.TestCase):
                 "processing_status": "in.(pending,processing,failed)",
                 "attempts": "lt.3",
                 "order": "discovered_at.asc",
-                "limit": "100",
+                "limit": "1000",
             },
         )
 

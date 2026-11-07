@@ -14,7 +14,7 @@ from .rss_discovery import (
 )
 
 
-MAX_RECORDS = 100
+MAX_RECORDS = 1000
 JOBS_TABLE = "chnscraping_crawl_jobs"
 
 load_dotenv(Path(__file__).resolve().parents[1] / ".env", override=True)

@@ -95,7 +95,7 @@ new ones as pending records; it does not extract article text. The sitemap's
 Apply migration 006 before running this workflow.
 
 The `People's Daily Article Extraction` workflow can be started manually to
-scrape up to 100 eligible pending records discovered by the sitemap workflow.
+scrape up to 1,000 eligible pending records discovered by the sitemap workflow.
 It honors the publisher's `robots.txt` rules and crawl delay, saves extracted
 articles, and updates discovery statuses and crawl-job progress. It may take
 several hours depending on the crawl delay.

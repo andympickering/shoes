@@ -24,7 +24,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r scraper/requirements.txt
 
-      - name: Scrape up to 100 pending sitemap discoveries
+      - name: Scrape up to 1,000 pending sitemap discoveries
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
