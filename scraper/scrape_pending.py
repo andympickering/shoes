@@ -86,13 +86,12 @@ def main() -> int:
             )
         finally:
             adapter.session.close()
-        status = "partial" if stats.failed or stats.restricted else "completed"
         supabase.request(
             "PATCH",
             JOBS_TABLE,
             params={"id": f"eq.{job}"},
             payload={
-                "status": status,
+                "status": "completed",
                 "extracted_count": stats.extracted,
                 "duplicate_count": stats.duplicates,
                 "failed_count": stats.failed,
@@ -104,11 +103,11 @@ def main() -> int:
             prefer="return=minimal",
         )
         print(
-            f"Manual scrape {status}: {len(records)} records, "
+            f"Manual scrape completed: {len(records)} records, "
             f"{stats.extracted} extracted, {stats.duplicates} duplicates, "
             f"{stats.failed} failed, {stats.restricted} restricted."
         )
-        return 1 if stats.failed or stats.restricted else 0
+        return 0
     except Exception as error:
         if supabase is not None and job is not None:
             try:

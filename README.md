@@ -98,7 +98,9 @@ The `People's Daily Article Extraction` workflow can be started manually to
 scrape up to 1,000 eligible pending records discovered by the sitemap workflow.
 It honors the publisher's `robots.txt` rules and crawl delay, saves extracted
 articles, and updates discovery statuses and crawl-job progress. It may take
-several hours depending on the crawl delay.
+several hours depending on the crawl delay. Individual article extraction
+failures are counted and recorded without failing the workflow; only a fatal
+workflow error marks the crawl job failed and returns a failing Action result.
 
 ## Project Structure
 

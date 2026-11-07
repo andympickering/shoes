@@ -26,7 +26,7 @@ class ScrapePendingTests(unittest.TestCase):
         )
 
     @patch("scraper.scrape_pending.SupabaseRest")
-    def test_processes_at_most_100_pending_records_and_updates_progress(
+    def test_completes_batch_with_record_failures_and_updates_progress(
         self, supabase_factory
     ):
         records = [
@@ -43,7 +43,7 @@ class ScrapePendingTests(unittest.TestCase):
             return ProcessStats(extracted=1, failed=1, errors=["article failed"])
 
         with patch("scraper.scrape_pending.process_discoveries", side_effect=process_records):
-            self.assertEqual(main(), 1)
+            self.assertEqual(main(), 0)
 
         supabase.find_pending_records.assert_called_once_with(MAX_RECORDS)
         job_create = supabase.request.call_args_list[0]
@@ -58,8 +58,35 @@ class ScrapePendingTests(unittest.TestCase):
         ]
         self.assertEqual(len(job_updates), 2)
         self.assertEqual(job_updates[0].kwargs["payload"]["extracted_count"], 1)
-        self.assertEqual(job_updates[-1].kwargs["payload"]["status"], "partial")
+        self.assertEqual(job_updates[-1].kwargs["payload"]["status"], "completed")
         self.assertEqual(job_updates[-1].kwargs["payload"]["failed_count"], 1)
+        supabase.session.close.assert_called_once()
+
+    @patch("scraper.scrape_pending.SupabaseRest")
+    def test_fatal_error_fails_job_and_returns_nonzero(self, supabase_factory):
+        supabase = MagicMock()
+        supabase.find_pending_records.return_value = [
+            {"id": "discovery-id", "discovered_url": "https://www.people.com.cn/a.html"}
+        ]
+        supabase.request.return_value = [{"id": "crawl-job-id"}]
+        supabase_factory.return_value = supabase
+
+        with patch(
+            "scraper.scrape_pending.process_discoveries",
+            side_effect=RuntimeError("Database unavailable"),
+        ):
+            self.assertEqual(main(), 1)
+
+        job_updates = [
+            call
+            for call in supabase.request.call_args_list
+            if call.args[:2] == ("PATCH", JOBS_TABLE)
+        ]
+        self.assertEqual(job_updates[-1].kwargs["payload"]["status"], "failed")
+        self.assertEqual(
+            job_updates[-1].kwargs["payload"]["error_summary"],
+            "Database unavailable",
+        )
         supabase.session.close.assert_called_once()
 
     @patch("scraper.scrape_pending.SupabaseRest")
