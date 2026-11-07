@@ -1,16 +1,14 @@
-name: People's Daily RSS Discovery
+name: People's Daily Article Extraction
 
 on:
-  schedule:
-    - cron: "0 * * * *"
   workflow_dispatch:
 
 concurrency:
-  group: people-rss-discovery
+  group: people-scrape-pending
   cancel-in-progress: false
 
 jobs:
-  discover:
+  scrape:
     runs-on: ubuntu-latest
     timeout-minutes: 360
     steps:
@@ -26,8 +24,8 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r scraper/requirements.txt
 
-      - name: Discover RSS article URLs
+      - name: Scrape up to 100 pending sitemap discoveries
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
-        run: python -m scraper.rss_discovery
+        run: python -m scraper.scrape_pending

@@ -4,7 +4,7 @@ import time
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Callable
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from urllib.robotparser import RobotFileParser
 
@@ -148,6 +148,21 @@ class SupabaseRest:
             )
         return pending
 
+    def find_pending_records(self, limit: int) -> list[dict[str, Any]]:
+        return self.request(
+            "GET",
+            TABLE,
+            params={
+                "select": "id,discovered_url,normalized_url,attempts,discovery_method",
+                "source": f"eq.{SOURCE}",
+                "discovery_method": "eq.sitemap",
+                "processing_status": "in.(pending,processing,failed)",
+                "attempts": "lt.3",
+                "order": "discovered_at.asc",
+                "limit": str(limit),
+            },
+        )
+
 
 @dataclass
 class ProcessStats:
@@ -201,7 +216,11 @@ def update_discovery_record(supabase: SupabaseRest, record_id: str, **fields: An
     )
 
 
-def save_article(supabase: SupabaseRest, article: Article) -> tuple[str, str]:
+def save_article(
+    supabase: SupabaseRest,
+    article: Article,
+    discovery_method: str = "rss",
+) -> tuple[str, str]:
     payload = {
         "source": SOURCE,
         "headline": article.headline,
@@ -209,7 +228,7 @@ def save_article(supabase: SupabaseRest, article: Article) -> tuple[str, str]:
         "url": article.url,
         "published_at": article.published_at.isoformat() if article.published_at else None,
         "scraped_at": utc_now(),
-        "metadata": {"discovery_method": "rss"},
+        "metadata": {"discovery_method": discovery_method},
     }
     inserted = supabase.request(
         "POST",
@@ -236,6 +255,7 @@ def process_discoveries(
     records: list[dict[str, Any]],
     adapter: PeopleAdapter,
     robots_session: requests.Session | None = None,
+    on_record_complete: Callable[[dict[str, Any], ProcessStats], None] | None = None,
 ) -> ProcessStats:
     stats = ProcessStats()
     policies: dict[str, tuple[RobotFileParser, float]] = {}
@@ -294,7 +314,11 @@ def process_discoveries(
                     stats.errors.append(f"{article_url}: {message}")
                     continue
 
-                status, article_id = save_article(supabase, article)
+                status, article_id = save_article(
+                    supabase,
+                    article,
+                    record.get("discovery_method", "rss"),
+                )
                 update_discovery_record(
                     supabase,
                     record_id,
@@ -323,6 +347,9 @@ def process_discoveries(
                 stats.failed += 1
                 stats.errors.append(f"{article_url}: {message}")
                 print(f"Article extraction failed for {article_url}: {message}", file=sys.stderr)
+            finally:
+                if on_record_complete is not None:
+                    on_record_complete(record, stats)
     finally:
         if owns_session:
             session.close()

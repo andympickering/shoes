@@ -28,7 +28,7 @@ the supporting tables to use the `chnscraping_` prefix as well.
 Migration 005 adds `discovered_from_url` to discovery records to retain the
 sitemap or page where each article URL was found.
 Migration 006 allows weekly sitemap discovery jobs to be recorded distinctly.
-Migration 008 allows hourly RSS discovery jobs to be recorded distinctly.
+Migration 008 extends the allowed crawl-job types to include hourly jobs.
 Migration 007 adds the article-list RPC used by the web app. It evaluates
 boolean search expressions and ranks matches before pagination. Each matching
 headline occurrence contributes 5 points (up to 5 occurrences); each matching
@@ -87,20 +87,18 @@ Add repo secrets:
 - `SUPABASE_URL`
 - `SUPABASE_SERVICE_KEY`
 
-The `People's Daily RSS Discovery` workflow checks
-`https://plink.anyfeeder.com/people-daily` hourly and can also be started
-manually. It records new article URLs, fetches and parses each publisher page,
-then saves non-duplicate articles to `chnscraping_articles`. Discovery records
-are linked to the saved article and marked processed; the RSS full-text content
-is not used. The workflow honors each publisher host's `robots.txt` crawl delay,
-so a run with many new articles can take a while. Apply migration 008 before
-running it.
+The `People's Daily Sitemap Discovery` workflow scans the sitemap index daily
+at 18:00 Rome time and can also be started manually. Its schedule accounts for
+Rome's CET/CEST daylight-saving changes. It discovers article URLs and stores
+new ones as pending records; it does not extract article text. The sitemap's
+`robots.txt` crawl delay is honored, so a full scan can take several hours.
+Apply migration 006 before running this workflow.
 
-The `People's Daily Sitemap Discovery` workflow scans the sitemap index weekly
-on Sundays at 00:00 UTC and can also be started manually. It discovers article
-URLs and stores new ones as pending records; it does not extract article text.
-The sitemap's `robots.txt` crawl delay is honored, so a full scan can take
-several hours. Apply migration 006 before running this workflow.
+The `People's Daily Article Extraction` workflow can be started manually to
+scrape up to 100 eligible pending records discovered by the sitemap workflow.
+It honors the publisher's `robots.txt` rules and crawl delay, saves extracted
+articles, and updates discovery statuses and crawl-job progress. It may take
+several hours depending on the crawl delay.
 
 ## Project Structure
 

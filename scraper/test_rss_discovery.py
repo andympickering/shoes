@@ -53,6 +53,10 @@ class RssDiscoveryTests(unittest.TestCase):
             post_article.kwargs["payload"][0]["story_text"],
             self.article.story_text,
         )
+        self.assertEqual(
+            post_article.kwargs["payload"][0]["metadata"]["discovery_method"],
+            "rss",
+        )
         final_update = [
             call
             for call in supabase.request.call_args_list
@@ -60,6 +64,26 @@ class RssDiscoveryTests(unittest.TestCase):
         ][-1]
         self.assertEqual(final_update.kwargs["payload"]["processing_status"], "processed")
         self.assertEqual(final_update.kwargs["payload"]["article_id"], "article-id")
+
+    @patch("scraper.rss_discovery.read_robots_policy")
+    @patch("scraper.rss_discovery.wait_for_crawl_delay")
+    def test_saves_discovery_method_with_article_metadata(self, _wait, read_robots):
+        read_robots.return_value = self.robots, 0
+        supabase = MagicMock()
+        supabase.request.return_value = [{"id": "article-id"}]
+        record = {**self.record, "discovery_method": "sitemap"}
+
+        process_discoveries(supabase, [record], self.adapter)
+
+        post_article = next(
+            call
+            for call in supabase.request.call_args_list
+            if call.args[:2] == ("POST", ARTICLES_TABLE)
+        )
+        self.assertEqual(
+            post_article.kwargs["payload"][0]["metadata"]["discovery_method"],
+            "sitemap",
+        )
 
     @patch("scraper.rss_discovery.read_robots_policy")
     @patch("scraper.rss_discovery.wait_for_crawl_delay")
