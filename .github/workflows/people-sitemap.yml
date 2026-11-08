@@ -2,8 +2,7 @@ name: People's Daily Sitemap Discovery
 
 on:
   schedule:
-    - cron: "0 16 * * *"
-    - cron: "0 17 * * *"
+    - cron: "1 17 * * *"
   workflow_dispatch:
 
 concurrency:
@@ -15,46 +14,19 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 300
     steps:
-      - name: Check schedule matches 18:00 in Rome
-        id: rome-time
-        if: github.event_name == 'schedule'
-        env:
-          SCHEDULE: ${{ github.event.schedule }}
-        run: |
-          case "$SCHEDULE" in
-            "0 16 * * *") scheduled_offset="+0200" ;;
-            "0 17 * * *") scheduled_offset="+0100" ;;
-            *)
-              echo "Unexpected schedule: $SCHEDULE" >&2
-              exit 1
-              ;;
-          esac
-
-          rome_offset="$(TZ=Europe/Rome date +%z)"
-          if [ "$rome_offset" = "$scheduled_offset" ]; then
-            echo "run=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "run=false" >> "$GITHUB_OUTPUT"
-            echo "Skipping this UTC schedule; it does not correspond to 18:00 in Rome."
-          fi
-
       - uses: actions/checkout@v4
-        if: github.event_name != 'schedule' || steps.rome-time.outputs.run == 'true'
 
       - name: Set up Python
-        if: github.event_name != 'schedule' || steps.rome-time.outputs.run == 'true'
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
       - name: Install scraper dependencies
-        if: github.event_name != 'schedule' || steps.rome-time.outputs.run == 'true'
         run: |
           python -m pip install --upgrade pip
           pip install -r scraper/requirements.txt
 
       - name: Discover sitemap article URLs
-        if: github.event_name != 'schedule' || steps.rome-time.outputs.run == 'true'
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}

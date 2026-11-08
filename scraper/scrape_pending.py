@@ -38,6 +38,7 @@ def main() -> int:
                 {
                     "source": "people",
                     "job_type": "manual",
+                    "crawl_type": "extraction",
                     "status": "running",
                     "discovered_count": len(records),
                     "started_at": started_at,

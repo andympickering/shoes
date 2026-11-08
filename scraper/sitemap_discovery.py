@@ -266,6 +266,7 @@ def main() -> int:
                 {
                     "source": SOURCE,
                     "job_type": "weekly",
+                    "crawl_type": "discovery",
                     "status": "running",
                     "started_at": timestamp,
                 }

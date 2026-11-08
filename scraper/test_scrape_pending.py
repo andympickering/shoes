@@ -49,6 +49,7 @@ class ScrapePendingTests(unittest.TestCase):
         job_create = supabase.request.call_args_list[0]
         self.assertEqual(job_create.args[:2], ("POST", JOBS_TABLE))
         self.assertEqual(job_create.kwargs["payload"][0]["job_type"], "manual")
+        self.assertEqual(job_create.kwargs["payload"][0]["crawl_type"], "extraction")
         self.assertEqual(job_create.kwargs["payload"][0]["discovered_count"], 2)
 
         job_updates = [

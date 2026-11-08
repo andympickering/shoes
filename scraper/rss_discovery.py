@@ -55,6 +55,34 @@ def normalize_url(url: str) -> str | None:
     return urlunsplit((parts.scheme.lower(), netloc, parts.path or "/", urlencode(query), ""))
 
 
+def alternate_people_domain_url(url: str) -> str | None:
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        return None
+    hostname = parts.hostname
+    if not hostname or parts.username or parts.password:
+        return None
+
+    host = hostname.lower()
+    if host == "people.com.cn" or host.endswith(".people.com.cn"):
+        alternate_host = host[: -len("people.com.cn")] + "people.cn"
+    elif host == "people.cn" or host.endswith(".people.cn"):
+        alternate_host = host[: -len("people.cn")] + "people.com.cn"
+    else:
+        return None
+
+    scheme = "https" if parts.scheme.lower() == "http" else parts.scheme
+    try:
+        port = parts.port
+    except ValueError:
+        return None
+    if scheme == "https" and port == 80:
+        port = None
+    netloc = alternate_host if port is None else f"{alternate_host}:{port}"
+    return urlunsplit((scheme, netloc, parts.path, parts.query, parts.fragment))
+
+
 def get_text(element: ET.Element, name: str) -> str:
     for child in element:
         if child.tag.rsplit("}", 1)[-1].lower() == name:
@@ -267,8 +295,6 @@ def process_discoveries(
         for record in records:
             record_id = record["id"]
             article_url = record["discovered_url"]
-            origin = urlsplit(article_url)
-            origin_key = f"{origin.scheme}://{origin.netloc}"
 
             try:
                 update_discovery_record(
@@ -279,12 +305,65 @@ def process_discoveries(
                     last_attempt_at=utc_now(),
                     error_message=None,
                 )
-                if origin_key not in policies:
-                    policies[origin_key] = read_robots_policy(session, article_url)
-                    last_request_by_origin[origin_key] = time.monotonic()
-                robots, delay_seconds = policies[origin_key]
+                alternate_url = alternate_people_domain_url(article_url)
+                candidate_urls = [article_url]
+                if alternate_url and alternate_url != article_url:
+                    candidate_urls.append(alternate_url)
 
-                if not robots.can_fetch(ARTICLE_USER_AGENT, article_url):
+                article = None
+                successful_url = article_url
+                errors: list[str] = []
+                original_restricted = False
+
+                for candidate_url in candidate_urls:
+                    if candidate_url != article_url:
+                        print(
+                            f"Retrying article on alternate hostname: {candidate_url}",
+                            file=sys.stderr,
+                        )
+                    origin = urlsplit(candidate_url)
+                    origin_key = f"{origin.scheme}://{origin.netloc}"
+
+                    try:
+                        if origin_key not in policies:
+                            policies[origin_key] = read_robots_policy(session, candidate_url)
+                            last_request_by_origin[origin_key] = time.monotonic()
+                        robots, delay_seconds = policies[origin_key]
+                    except requests.RequestException as error:
+                        errors.append(f"{candidate_url}: {error}")
+                        continue
+
+                    if not robots.can_fetch(ARTICLE_USER_AGENT, candidate_url):
+                        if candidate_url == article_url:
+                            original_restricted = True
+                            break
+                        errors.append(f"{candidate_url}: robots.txt disallows this article URL")
+                        continue
+
+                    wait_for_crawl_delay(delay_seconds, last_request_by_origin[origin_key])
+                    last_request_by_origin[origin_key] = time.monotonic()
+                    try:
+                        candidate_article = adapter._parse_article(candidate_url)
+                    except requests.RequestException as error:
+                        errors.append(f"{candidate_url}: {error}")
+                        continue
+
+                    if (
+                        candidate_article is None
+                        or not candidate_article.headline.strip()
+                        or not candidate_article.story_text.strip()
+                        or candidate_article.story_text.strip() == candidate_article.headline.strip()
+                    ):
+                        errors.append(
+                            f"{candidate_url}: Article adapter did not extract both a headline and body"
+                        )
+                        continue
+
+                    article = candidate_article
+                    successful_url = candidate_url
+                    break
+
+                if original_restricted:
                     update_discovery_record(
                         supabase,
                         record_id,
@@ -294,16 +373,8 @@ def process_discoveries(
                     stats.restricted += 1
                     continue
 
-                wait_for_crawl_delay(delay_seconds, last_request_by_origin[origin_key])
-                last_request_by_origin[origin_key] = time.monotonic()
-                article = adapter._parse_article(article_url)
-                if (
-                    article is None
-                    or not article.headline.strip()
-                    or not article.story_text.strip()
-                    or article.story_text.strip() == article.headline.strip()
-                ):
-                    message = "Article adapter did not extract both a headline and body"
+                if article is None:
+                    message = "All supported hostnames failed: " + " | ".join(errors)
                     update_discovery_record(
                         supabase,
                         record_id,
@@ -314,6 +385,7 @@ def process_discoveries(
                     stats.errors.append(f"{article_url}: {message}")
                     continue
 
+                article.url = successful_url
                 status, article_id = save_article(
                     supabase,
                     article,
@@ -399,6 +471,7 @@ def main() -> int:
                 {
                     "source": SOURCE,
                     "job_type": "hourly",
+                    "crawl_type": "discovery",
                     "status": "running",
                     "started_at": timestamp,
                 }

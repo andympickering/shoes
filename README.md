@@ -17,6 +17,7 @@ Scrapes Chinese news websites every 24 hours, stores headlines and story text in
    - `supabase/migrations/006_weekly_crawl_jobs.sql`
    - `supabase/migrations/007_article_relevance_search.sql`
    - `supabase/migrations/008_hourly_crawl_jobs.sql`
+   - `supabase/migrations/009_crawl_type.sql`
 
 The second migration extends the article records with publisher IDs, content
 fingerprints, and collection timestamps. It also creates URL history, article
@@ -29,6 +30,8 @@ Migration 005 adds `discovered_from_url` to discovery records to retain the
 sitemap or page where each article URL was found.
 Migration 006 allows weekly sitemap discovery jobs to be recorded distinctly.
 Migration 008 extends the allowed crawl-job types to include hourly jobs.
+Migration 009 adds `crawl_type` to distinguish discovery jobs from article
+extraction jobs, and classifies existing hourly/weekly jobs as discovery.
 Migration 007 adds the article-list RPC used by the web app. It evaluates
 boolean search expressions and ranks matches before pagination. Each matching
 headline occurrence contributes 5 points (up to 5 occurrences); each matching
@@ -88,19 +91,24 @@ Add repo secrets:
 - `SUPABASE_SERVICE_KEY`
 
 The `People's Daily Sitemap Discovery` workflow scans the sitemap index daily
-at 18:00 Rome time and can also be started manually. Its schedule accounts for
-Rome's CET/CEST daylight-saving changes. It discovers article URLs and stores
-new ones as pending records; it does not extract article text. The sitemap's
-`robots.txt` crawl delay is honored, so a full scan can take several hours.
-Apply migration 006 before running this workflow.
+at 17:01 UTC and can also be started manually. This is 18:01 in Rome during
+CET and 19:01 during CEST. It discovers article URLs and stores new ones as
+pending records; it does not extract article text. The sitemap's `robots.txt`
+crawl delay is honored, so a full scan can take several hours. Apply migration
+006 before running this workflow.
 
-The `People's Daily Article Extraction` workflow can be started manually to
-scrape up to 1,000 eligible pending records discovered by the sitemap workflow.
-It honors the publisher's `robots.txt` rules and crawl delay, saves extracted
-articles, and updates discovery statuses and crawl-job progress. It may take
-several hours depending on the crawl delay. Individual article extraction
-failures are counted and recorded without failing the workflow; only a fatal
-workflow error marks the crawl job failed and returns a failing Action result.
+The `People's Daily Article Extraction` workflow starts automatically after a
+successful sitemap discovery run and can also be started manually. It scrapes
+up to 1,000 eligible pending records, honoring the publisher's `robots.txt`
+rules and crawl delay, saving extracted articles, and updating discovery
+statuses and crawl-job progress. If fetching or extracting a URL fails, it
+retries once using the equivalent `.cn` or `.com.cn` hostname, upgrading an
+HTTP URL to HTTPS for the retry. It checks the alternate hostname's own
+`robots.txt` rules; URLs explicitly disallowed by `robots.txt` are not retried.
+It may take several hours depending on the crawl delay. Individual article
+extraction failures are counted and recorded without failing the workflow;
+only a fatal workflow error marks the crawl job failed and returns a failing
+Action result.
 
 ## Project Structure
 

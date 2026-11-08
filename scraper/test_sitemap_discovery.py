@@ -115,6 +115,7 @@ Sitemap: http://www.people.cn/sitemap_index.xml
 
         job_call = supabase.request.call_args_list[0]
         self.assertEqual(job_call.kwargs["payload"][0]["job_type"], "weekly")
+        self.assertEqual(job_call.kwargs["payload"][0]["crawl_type"], "discovery")
         insert_call = next(
             call
             for call in supabase.request.call_args_list

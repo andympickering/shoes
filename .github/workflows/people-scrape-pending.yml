@@ -2,6 +2,9 @@ name: People's Daily Article Extraction
 
 on:
   workflow_dispatch:
+  workflow_run:
+    workflows: ["People's Daily Sitemap Discovery"]
+    types: [completed]
 
 concurrency:
   group: people-scrape-pending
@@ -9,6 +12,7 @@ concurrency:
 
 jobs:
   scrape:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 360
     steps:

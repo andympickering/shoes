@@ -2,6 +2,8 @@ import os
 import unittest
 from unittest.mock import MagicMock, patch
 
+import requests
+
 from .adapters.base import Article
 from .adapters.people import PeopleAdapter
 from .rss_discovery import (
@@ -10,6 +12,7 @@ from .rss_discovery import (
     TABLE,
     ProcessStats,
     SupabaseRest,
+    alternate_people_domain_url,
     main,
     process_discoveries,
     read_robots_policy,
@@ -31,6 +34,19 @@ class RssDiscoveryTests(unittest.TestCase):
         self.adapter._parse_article.return_value = self.article
         self.robots = MagicMock()
         self.robots.can_fetch.return_value = True
+
+    def test_alternate_people_domain_url_switches_only_the_domain_suffix(self):
+        self.assertEqual(
+            alternate_people_domain_url(
+                "http://uk.people.com.cn/n1/article.html?from=sitemap"
+            ),
+            "https://uk.people.cn/n1/article.html?from=sitemap",
+        )
+        self.assertEqual(
+            alternate_people_domain_url("https://usa.people.cn/n1/article.html"),
+            "https://usa.people.com.cn/n1/article.html",
+        )
+        self.assertIsNone(alternate_people_domain_url("https://example.com/article.html"))
 
     @patch("scraper.rss_discovery.read_robots_policy")
     @patch("scraper.rss_discovery.wait_for_crawl_delay")
@@ -153,6 +169,64 @@ class RssDiscoveryTests(unittest.TestCase):
             any(call.args[:2] == ("POST", ARTICLES_TABLE) for call in supabase.request.call_args_list)
         )
 
+    @patch("scraper.rss_discovery.read_robots_policy")
+    @patch("scraper.rss_discovery.wait_for_crawl_delay")
+    def test_retries_alternate_domain_when_robots_request_times_out(
+        self, _wait, read_robots
+    ):
+        original_url = "http://uk.people.com.cn/n1/article.html"
+        alternate_url = "https://uk.people.cn/n1/article.html"
+        record = {**self.record, "discovered_url": original_url}
+        alternate_article = Article(
+            headline="A test headline",
+            story_text="A test headline followed by the full article body.",
+            url=alternate_url,
+        )
+        self.adapter._parse_article.return_value = alternate_article
+        read_robots.side_effect = [
+            requests.ConnectTimeout("robots request timed out"),
+            (self.robots, 0),
+        ]
+        supabase = MagicMock()
+        supabase.request.return_value = [{"id": "article-id"}]
+
+        stats = process_discoveries(supabase, [record], self.adapter)
+
+        self.assertEqual(stats.extracted, 1)
+        self.assertEqual(read_robots.call_count, 2)
+        self.adapter._parse_article.assert_called_once_with(alternate_url)
+        post_article = next(
+            call
+            for call in supabase.request.call_args_list
+            if call.args[:2] == ("POST", ARTICLES_TABLE)
+        )
+        self.assertEqual(post_article.kwargs["payload"][0]["url"], alternate_url)
+
+    @patch("scraper.rss_discovery.read_robots_policy")
+    @patch("scraper.rss_discovery.wait_for_crawl_delay")
+    def test_retries_alternate_domain_when_article_extraction_fails(
+        self, _wait, read_robots
+    ):
+        original_url = "http://uk.people.com.cn/n1/article.html"
+        alternate_url = "https://uk.people.cn/n1/article.html"
+        record = {**self.record, "discovered_url": original_url}
+        alternate_article = Article(
+            headline="A test headline",
+            story_text="A test headline followed by the full article body.",
+            url=alternate_url,
+        )
+        self.adapter._parse_article.side_effect = [None, alternate_article]
+        read_robots.return_value = self.robots, 0
+        supabase = MagicMock()
+        supabase.request.return_value = [{"id": "article-id"}]
+
+        stats = process_discoveries(supabase, [record], self.adapter)
+
+        self.assertEqual(stats.extracted, 1)
+        self.assertEqual(self.adapter._parse_article.call_count, 2)
+        self.adapter._parse_article.assert_any_call(original_url)
+        self.adapter._parse_article.assert_any_call(alternate_url)
+
     def test_supabase_rest_uses_service_key_as_bearer_token(self):
         with patch.dict(
             os.environ,
@@ -219,6 +293,10 @@ class RssDiscoveryTests(unittest.TestCase):
         self.assertEqual(
             supabase.request.call_args_list[0].kwargs["payload"][0]["job_type"],
             "hourly",
+        )
+        self.assertEqual(
+            supabase.request.call_args_list[0].kwargs["payload"][0]["crawl_type"],
+            "discovery",
         )
         job_update = supabase.request.call_args_list[-1]
         self.assertEqual(job_update.kwargs["payload"]["extracted_count"], 1)
