@@ -27,7 +27,14 @@ jobs:
             echo "Missing ALERTS_SITE_URL repository variable."
             exit 1
           fi
-          curl --fail-with-body --silent --show-error --max-time 60 \
+          case "$ALERTS_SITE_URL" in
+            https://*) ;;
+            *)
+              echo "ALERTS_SITE_URL must start with https://"
+              exit 1
+              ;;
+          esac
+          curl --location --fail-with-body --silent --show-error --max-time 60 --max-redirs 3 \
             -X POST "$ALERTS_SITE_URL/api/alerts/send" \
             -H "Authorization: Bearer $ALERTS_CRON_SECRET" \
             -H "Content-Type: application/json"

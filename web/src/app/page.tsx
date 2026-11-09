@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useState } from "react";
+import { AlertControls } from "@/components/alert-controls";
 import { getSourceLabel } from "@/lib/source-label";
 
 interface Article {
@@ -22,20 +23,6 @@ interface ArticleFilters {
 const pageSize = 49;
 
 export default function Home() {
-  const [alertsOpen, setAlertsOpen] = useState(false);
-  const [alertForm, setAlertForm] = useState({
-    searchTerms: "",
-    timeSpan: "today",
-    frequency: "daily",
-    deliveryTimeUtc: "09:00",
-    emails: "",
-    consent: false,
-  });
-  const [alertSaving, setAlertSaving] = useState(false);
-  const [alertSaved, setAlertSaved] = useState(false);
-  const [alertError, setAlertError] = useState<string | null>(null);
-  const alertTriggerRef = useRef<HTMLButtonElement>(null);
-  const alertSearchRef = useRef<HTMLInputElement>(null);
   const [articles, setArticles] = useState<Article[]>([]);
   const [sources, setSources] = useState<string[]>([]);
   const [filters, setFilters] = useState<ArticleFilters>({
@@ -50,44 +37,6 @@ export default function Home() {
   const [loading, setLoading] = useState(true);
   const [sourceError, setSourceError] = useState<string | null>(null);
   const [articleError, setArticleError] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!alertsOpen) return;
-    const trigger = alertTriggerRef.current;
-    alertSearchRef.current?.focus();
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") setAlertsOpen(false);
-    }
-    window.addEventListener("keydown", handleKeyDown);
-    return () => {
-      window.removeEventListener("keydown", handleKeyDown);
-      trigger?.focus();
-    };
-  }, [alertsOpen]);
-
-  async function saveAlert(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setAlertSaving(true);
-    setAlertError(null);
-    try {
-      const response = await fetch("/api/alerts", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(alertForm),
-      });
-      const result = await response.json();
-      if (!response.ok) {
-        throw new Error(result.error || "Could not save this alert.");
-      }
-      setAlertSaved(true);
-    } catch (error) {
-      setAlertError(
-        error instanceof Error ? error.message : "Could not save this alert."
-      );
-    } finally {
-      setAlertSaving(false);
-    }
-  }
 
   useEffect(() => {
     const controller = new AbortController();
@@ -193,192 +142,9 @@ export default function Home() {
               <h1 className="text-lg font-semibold tracking-tight">中国新闻档案</h1>
             </div>
           </div>
-          <button
-            ref={alertTriggerRef}
-            type="button"
-            onClick={() => {
-              setAlertSaved(false);
-              setAlertError(null);
-              setAlertsOpen(true);
-            }}
-            className="shrink-0 rounded-lg border border-amber-400 bg-red-700 px-3 py-2 text-sm font-semibold text-amber-200 shadow-sm transition-colors hover:bg-red-800 focus:outline-none focus:ring-2 focus:ring-red-700/30 focus:ring-offset-2 dark:border-amber-500 dark:bg-red-800 dark:hover:bg-red-700"
-          >
-            Alerts
-          </button>
+          <AlertControls />
         </div>
       </header>
-
-      {alertsOpen && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-3 sm:p-5"
-          onMouseDown={(event) => {
-            if (event.target === event.currentTarget && !alertSaving) {
-              setAlertsOpen(false);
-            }
-          }}
-        >
-          <section
-            aria-labelledby="alerts-title"
-            aria-modal="true"
-            className="max-h-[92vh] w-full max-w-lg overflow-y-auto rounded-xl border border-amber-400 bg-white p-4 shadow-2xl dark:border-amber-600 dark:bg-slate-900 sm:p-5"
-            role="dialog"
-          >
-            <div className="mb-4 flex items-start justify-between gap-3">
-              <div>
-                <h2 id="alerts-title" className="text-lg font-semibold text-slate-950 dark:text-white">
-                  Email alerts
-                </h2>
-                <p className="mt-1 text-xs text-slate-600 dark:text-slate-400">
-                  Get new archive matches delivered to your inbox.
-                </p>
-              </div>
-              <button
-                type="button"
-                aria-label="Close alerts"
-                onClick={() => setAlertsOpen(false)}
-                className="rounded-md px-2 py-1 text-lg leading-none text-slate-500 hover:bg-slate-100 hover:text-slate-900 focus:outline-none focus:ring-2 focus:ring-red-700 dark:hover:bg-slate-800 dark:hover:text-white"
-              >
-                ×
-              </button>
-            </div>
-
-            {alertSaved ? (
-              <div>
-                <p role="status" className="rounded-lg border border-green-200 bg-green-50 p-3 text-sm text-green-900 dark:border-green-900 dark:bg-green-950 dark:text-green-200">
-                  Alert saved. Messages will be sent to the listed recipients on the selected schedule. No confirmation emails are sent.
-                </p>
-                <button
-                  type="button"
-                  onClick={() => setAlertsOpen(false)}
-                  className="mt-4 rounded-lg bg-red-700 px-4 py-2 text-sm font-semibold text-amber-200 hover:bg-red-800 focus:outline-none focus:ring-2 focus:ring-red-700/30 focus:ring-offset-2"
-                >
-                  Done
-                </button>
-              </div>
-            ) : (
-              <form className="space-y-3" onSubmit={saveAlert}>
-                <div>
-                  <label htmlFor="alert-search-terms" className="mb-1 block text-xs font-medium text-slate-700 dark:text-slate-300">
-                    Search terms
-                  </label>
-                  <input
-                    ref={alertSearchRef}
-                    id="alert-search-terms"
-                    type="text"
-                    required
-                    maxLength={200}
-                    value={alertForm.searchTerms}
-                    onChange={(event) => setAlertForm((current) => ({ ...current, searchTerms: event.target.value }))}
-                    placeholder='term AND term OR "phrase"'
-                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-red-700 focus:outline-none focus:ring-2 focus:ring-red-700/20 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
-                  />
-                  <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">
-                    Supports AND, OR, quoted phrases, and parentheses.
-                  </p>
-                </div>
-
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                  <div>
-                    <label htmlFor="alert-timespan" className="mb-1 block text-xs font-medium text-slate-700 dark:text-slate-300">
-                      Timespan
-                    </label>
-                    <select
-                      id="alert-timespan"
-                      value={alertForm.timeSpan}
-                      onChange={(event) => setAlertForm((current) => ({ ...current, timeSpan: event.target.value }))}
-                      className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-red-700 focus:outline-none focus:ring-2 focus:ring-red-700/20 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
-                    >
-                      <option value="today">Today (UTC)</option>
-                      <option value="last_3_days">Last 3 days</option>
-                      <option value="last_week">Last week</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label htmlFor="alert-frequency" className="mb-1 block text-xs font-medium text-slate-700 dark:text-slate-300">
-                      Frequency
-                    </label>
-                    <select
-                      id="alert-frequency"
-                      value={alertForm.frequency}
-                      onChange={(event) => setAlertForm((current) => ({ ...current, frequency: event.target.value }))}
-                      className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-red-700 focus:outline-none focus:ring-2 focus:ring-red-700/20 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
-                    >
-                      <option value="daily">Daily</option>
-                      <option value="weekly">Weekly</option>
-                      <option value="monthly">Monthly</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label htmlFor="alert-delivery-time" className="mb-1 block text-xs font-medium text-slate-700 dark:text-slate-300">
-                      Delivery time (UTC)
-                    </label>
-                    <input
-                      id="alert-delivery-time"
-                      type="time"
-                      required
-                      value={alertForm.deliveryTimeUtc}
-                      onChange={(event) => setAlertForm((current) => ({ ...current, deliveryTimeUtc: event.target.value }))}
-                      className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-red-700 focus:outline-none focus:ring-2 focus:ring-red-700/20 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
-                    />
-                  </div>
-                </div>
-
-                <div>
-                  <label htmlFor="alert-emails" className="mb-1 block text-xs font-medium text-slate-700 dark:text-slate-300">
-                    Email addresses
-                  </label>
-                  <textarea
-                    id="alert-emails"
-                    required
-                    rows={2}
-                    value={alertForm.emails}
-                    onChange={(event) => setAlertForm((current) => ({ ...current, emails: event.target.value }))}
-                    placeholder="name@example.com; team@example.com"
-                    className="w-full resize-y rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-red-700 focus:outline-none focus:ring-2 focus:ring-red-700/20 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
-                  />
-                  <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">
-                    Separate up to 10 addresses with semicolons.
-                  </p>
-                </div>
-
-                <label className="flex items-start gap-2 text-xs leading-5 text-slate-600 dark:text-slate-400">
-                  <input
-                    type="checkbox"
-                    required
-                    checked={alertForm.consent}
-                    onChange={(event) => setAlertForm((current) => ({ ...current, consent: event.target.checked }))}
-                    className="mt-1 h-4 w-4 shrink-0 rounded border-slate-300 accent-red-700 focus:ring-red-700 dark:border-slate-600"
-                  />
-                  I have permission to send these alerts to the listed recipients.
-                </label>
-
-                {alertError && (
-                  <p role="alert" className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
-                    {alertError}
-                  </p>
-                )}
-
-                <div className="flex justify-end gap-2 pt-1">
-                  <button
-                    type="button"
-                    onClick={() => setAlertsOpen(false)}
-                    className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-red-700/30 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="submit"
-                    disabled={alertSaving}
-                    className="rounded-lg border border-amber-400 bg-red-700 px-4 py-2 text-sm font-semibold text-amber-200 shadow-sm hover:bg-red-800 disabled:cursor-wait disabled:opacity-60 focus:outline-none focus:ring-2 focus:ring-red-700/30 focus:ring-offset-2 dark:border-amber-500 dark:bg-red-800 dark:hover:bg-red-700"
-                  >
-                    {alertSaving ? "Saving..." : "Save alert"}
-                  </button>
-                </div>
-              </form>
-            )}
-          </section>
-        </div>
-      )}
 
       <main className="mx-auto max-w-7xl px-2 py-4 sm:px-4 sm:py-6 lg:px-6">
         {(sourceError || articleError) && (

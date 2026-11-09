@@ -19,6 +19,7 @@ Scrapes Chinese news websites every 24 hours, stores headlines and story text in
    - `supabase/migrations/008_hourly_crawl_jobs.sql`
    - `supabase/migrations/009_crawl_type.sql`
    - `supabase/migrations/010_email_alerts.sql`
+   - `supabase/migrations/011_alert_accounts.sql`
 
 The second migration extends the article records with publisher IDs, content
 fingerprints, and collection timestamps. It also creates URL history, article
@@ -113,13 +114,24 @@ Action result.
 
 ### Email Alerts
 
-Apply migration `010_email_alerts.sql` after the earlier migrations. The archive
+Apply migrations `010_email_alerts.sql` and `011_alert_accounts.sql` after the
+earlier migrations. Migration 011 disables alert subscriptions created before
+account ownership was introduced; recreate them after signing in. The archive
 header's **Alerts** form saves search expressions, lookback windows, recipient
-addresses, and delivery schedules in Supabase. Alert searches use the same
+addresses, and delivery schedules in Supabase. The adjacent **Manage** modal
+has **Alerts** and **Account** tabs for editing, pausing, resuming, or deleting
+the signed-in user's subscriptions. Alert searches use the same
 `AND`, `OR`, phrase, and parenthesis syntax as the archive. “Today” means since
 00:00 UTC; “Last 3 days” and “Last week” are rolling 72-hour and 7-day windows.
 No email is sent when there are no matching articles. Monthly schedules stay on
 the day they were created (using the last day of shorter months).
+
+Enable the Email provider in Supabase Authentication. Configure the Supabase
+Site URL as the deployed HTTPS site, and add the deployed site and
+`http://localhost:3000` as allowed redirect URLs. Accounts use email and
+password; if email confirmation is enabled, new users must confirm their
+account before signing in. Alert recipient addresses remain separate from the
+account email and are not sent confirmation emails.
 
 Configure these environment variables in Netlify for the deployed web app:
 
