@@ -1,0 +1,33 @@
+name: Email Alert Delivery
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: alert-email-delivery
+  cancel-in-progress: false
+
+jobs:
+  deliver:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Deliver one due alert
+        env:
+          ALERTS_CRON_SECRET: ${{ secrets.ALERTS_CRON_SECRET }}
+          ALERTS_SITE_URL: ${{ vars.ALERTS_SITE_URL }}
+        run: |
+          if [ -z "$ALERTS_CRON_SECRET" ]; then
+            echo "Missing ALERTS_CRON_SECRET repository secret."
+            exit 1
+          fi
+          if [ -z "$ALERTS_SITE_URL" ]; then
+            echo "Missing ALERTS_SITE_URL repository variable."
+            exit 1
+          fi
+          curl --fail-with-body --silent --show-error --max-time 60 \
+            -X POST "$ALERTS_SITE_URL/api/alerts/send" \
+            -H "Authorization: Bearer $ALERTS_CRON_SECRET" \
+            -H "Content-Type: application/json"

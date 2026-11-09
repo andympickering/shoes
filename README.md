@@ -18,6 +18,7 @@ Scrapes Chinese news websites every 24 hours, stores headlines and story text in
    - `supabase/migrations/007_article_relevance_search.sql`
    - `supabase/migrations/008_hourly_crawl_jobs.sql`
    - `supabase/migrations/009_crawl_type.sql`
+   - `supabase/migrations/010_email_alerts.sql`
 
 The second migration extends the article records with publisher IDs, content
 fingerprints, and collection timestamps. It also creates URL history, article
@@ -109,6 +110,34 @@ It may take several hours depending on the crawl delay. Individual article
 extraction failures are counted and recorded without failing the workflow;
 only a fatal workflow error marks the crawl job failed and returns a failing
 Action result.
+
+### Email Alerts
+
+Apply migration `010_email_alerts.sql` after the earlier migrations. The archive
+header's **Alerts** form saves search expressions, lookback windows, recipient
+addresses, and delivery schedules in Supabase. Alert searches use the same
+`AND`, `OR`, phrase, and parenthesis syntax as the archive. “Today” means since
+00:00 UTC; “Last 3 days” and “Last week” are rolling 72-hour and 7-day windows.
+No email is sent when there are no matching articles. Monthly schedules stay on
+the day they were created (using the last day of shorter months).
+
+Configure these environment variables in Netlify for the deployed web app:
+
+- `SUPABASE_URL` and `SUPABASE_SERVICE_KEY` (server-side; never expose the
+  service key as a `NEXT_PUBLIC_` variable)
+- `RESEND_API_KEY`
+- `ALERTS_FROM_EMAIL` (a sender address verified with Resend)
+- `ALERTS_CRON_SECRET` (a long random secret)
+- `ALERTS_SITE_URL` (the deployed site’s HTTPS URL, used for article and
+  unsubscribe links)
+
+In GitHub repository settings, add `ALERTS_CRON_SECRET` as an Actions secret
+with the same value configured in Netlify, and add `ALERTS_SITE_URL` as an
+Actions variable. The `Email Alert Delivery` workflow calls the protected
+delivery endpoint every five minutes and processes one due alert per run; it
+can also be started manually. Recipients are not sent confirmation emails.
+The form requires permission to email the listed addresses, and every digest
+includes an unsubscribe link that disables that alert.
 
 ## Project Structure
 
