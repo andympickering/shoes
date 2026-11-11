@@ -68,6 +68,7 @@ test("creation and editing persist the selected article limit", async () => {
   const dependencies = {
     "next/server": nextServer,
     "@/lib/alert-auth": { getAlertUserId: async () => "user" },
+    "@/lib/alert-confirmation": { sendPendingConfirmations: async () => [] },
     "@/lib/alert-schedule": schedule,
     "@/lib/alert-validation": validation,
     "@/lib/supabase-admin": { supabaseAdmin: admin },
@@ -108,7 +109,7 @@ test("delivery searches and renders no more than each alert's configured limit",
     ALERTS_SITE_URL: "https://example.com",
   });
   try {
-    for (const [limit, total] of [[1, 120], [25, 120], [100, 120], [25, 3], [25, 0]]) {
+    for (const [limit, total, hasConfirmed] of [[1, 120, true], [25, 120, true], [100, 120, true], [25, 3, true], [25, 0, true], [25, 120, false]]) {
       let requestedLimit;
       let email;
       const expectedArticles = Math.min(limit, total);
@@ -126,7 +127,7 @@ test("delivery searches and renders no more than each alert's configured limit",
         time_span: "last_week",
         frequency: "daily",
         schedule_day: 1,
-        emails: ["reader@example.com"],
+        emails: ["reader@example.com", "pending@example.com"],
         next_delivery_at: "2026-01-01T09:00:00Z",
         lock_expires_at: "2026-01-01T09:15:00Z",
         max_articles: limit,
@@ -138,6 +139,13 @@ test("delivery searches and renders no more than each alert's configured limit",
           return { data: results, error: null };
         },
         from(table) {
+          if (table === "chnscraping_alert_recipients") {
+            return {
+              select() { return this; },
+              eq() { return this; },
+              async not() { return { data: hasConfirmed ? [{ email: "reader@example.com" }] : [], error: null }; },
+            };
+          }
           if (table === "chnscraping_articles") {
             return {
               select() { return this; },
@@ -164,12 +172,13 @@ test("delivery searches and renders no more than each alert's configured limit",
         "@/lib/supabase-admin": { supabaseAdmin: admin },
       });
       const response = await route.POST({ headers: new Headers({ authorization: "Bearer test-secret" }) });
-      assert.deepEqual(response.body, { processed: 1, sent: total > 0 ? 1 : 0 });
-      assert.equal(requestedLimit, limit);
-      if (total === 0) {
+      assert.deepEqual(response.body, { processed: 1, sent: total > 0 && hasConfirmed ? 1 : 0 });
+      assert.equal(requestedLimit, hasConfirmed ? limit : undefined);
+      if (total === 0 || !hasConfirmed) {
         assert.equal(email, undefined);
         continue;
       }
+      assert.deepEqual(email.to, ["reader@example.com"]);
       assert.equal((email.html.match(/<li /g) ?? []).length, expectedArticles);
       assert.equal((email.text.match(/^- Headline /gm) ?? []).length, expectedArticles);
       if (total > limit) {

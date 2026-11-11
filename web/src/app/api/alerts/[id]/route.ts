@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAlertUserId } from "@/lib/alert-auth";
+import { sendPendingConfirmations } from "@/lib/alert-confirmation";
 import { getFirstAlertDelivery } from "@/lib/alert-schedule";
 import { validateAlertSettings } from "@/lib/alert-validation";
 import { supabaseAdmin } from "@/lib/supabase-admin";
@@ -45,7 +46,15 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
       return NextResponse.json({ error: "Could not update this alert." }, { status: 500 });
     }
     if (!data) return NextResponse.json({ error: "Alert not found." }, { status: 404 });
-    return NextResponse.json({ updated: true });
+    let confirmationWarning: string | null = null;
+    try {
+      const failed = await sendPendingConfirmations(params.id, userId);
+      if (failed.length) confirmationWarning = "Some confirmation emails could not be sent. Retry from Manage alerts.";
+    } catch (confirmationError) {
+      console.error("Could not send alert confirmations:", confirmationError);
+      confirmationWarning = "Confirmation emails could not be sent. Retry from Manage alerts.";
+    }
+    return NextResponse.json({ updated: true, confirmationWarning });
   }
 
   const validated = validateAlertSettings(body);

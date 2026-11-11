@@ -21,6 +21,7 @@ Scrapes Chinese news websites every 24 hours, stores headlines and story text in
    - `supabase/migrations/010_email_alerts.sql`
    - `supabase/migrations/011_alert_accounts.sql`
    - `supabase/migrations/012_alert_max_articles.sql`
+   - `supabase/migrations/013_alert_recipient_confirmation.sql`
 
 The second migration extends the article records with publisher IDs, content
 fingerprints, and collection timestamps. It also creates URL history, article
@@ -122,7 +123,7 @@ publication timestamps, and article paragraphs under `#contentStr`.
 
 ### Email Alerts
 
-Apply migrations `010_email_alerts.sql` through `012_alert_max_articles.sql` after the
+Apply migrations `010_email_alerts.sql` through `013_alert_recipient_confirmation.sql` after the
 earlier migrations. Migration 011 disables alert subscriptions created before
 account ownership was introduced; recreate them after signing in. The archive
 header's **Alerts** form saves search expressions, lookback windows, recipient
@@ -140,7 +141,15 @@ Site URL as the deployed HTTPS site, and add the deployed site and
 `http://localhost:3000` as allowed redirect URLs. Accounts use email and
 password; if email confirmation is enabled, new users must confirm their
 account before signing in. Alert recipient addresses remain separate from the
-account email and are not sent confirmation emails.
+account email. Each newly added alert recipient receives a confirmation email
+and must confirm before receiving that alert; confirmed recipients receive it
+independently of other recipients. Existing recipients are grandfathered in as
+confirmed. Removing and re-adding a recipient requires confirmation again.
+Pending recipients and a resend action are shown in **Manage**. Confirmation
+emails are limited to five per recipient and 50 per account per hour.
+
+Pause alert delivery while applying migration 013 and deploying the updated
+web app, then resume delivery after both are in place.
 
 Configure these environment variables in Netlify for the deployed web app:
 
@@ -159,9 +168,8 @@ publisher extraction workflow, but only sends after both have succeeded for
 the same UTC run date and branch. Manual alert-delivery runs use the same
 check. It calls the protected delivery endpoint until all due alerts have been
 processed. An alert's configured delivery time marks when it becomes due;
-delivery waits until both successful crawls finish. Recipients are not sent
-confirmation emails.
-The form requires permission to email the listed addresses, and every digest
+delivery waits until both successful crawls finish. The form requires permission
+to email the listed addresses, and every digest
 includes an unsubscribe link that disables that alert.
 
 ## Project Structure

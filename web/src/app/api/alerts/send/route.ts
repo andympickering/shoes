@@ -92,6 +92,15 @@ function formatEmailDate(value: Date) {
 async function sendAlert(alert: DueAlert, now: Date, siteUrl: string) {
   if (!supabaseAdmin) throw new Error("Supabase admin client is not configured.");
 
+  const { data: recipients, error: recipientsError } = await supabaseAdmin
+    .from("chnscraping_alert_recipients")
+    .select("email")
+    .eq("subscription_id", alert.subscription_id)
+    .not("confirmed_at", "is", null);
+  if (recipientsError) throw new Error(`Could not load confirmed alert recipients: ${recipientsError.message}`);
+  const confirmedEmails = (recipients ?? []).map((recipient) => recipient.email);
+  if (confirmedEmails.length === 0) return false;
+
   const searchExpression = parseArticleSearch(alert.search_terms);
   const { data, error } = await supabaseAdmin.rpc("chnscraping_list_articles", {
     search_expression: searchExpression,
@@ -168,7 +177,7 @@ async function sendAlert(alert: DueAlert, now: Date, siteUrl: string) {
     },
     body: JSON.stringify({
       from: process.env.ALERTS_FROM_EMAIL,
-      to: alert.emails,
+      to: confirmedEmails,
       subject: `Chinese News Archive: ${totalCount} alert match${totalCount === 1 ? "" : "es"}`,
       html,
       text,

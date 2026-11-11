@@ -27,6 +27,7 @@ interface ManagedAlert {
   delivery_time_utc: string;
   max_articles: number;
   emails: string[];
+  recipients: { email: string; confirmed_at: string | null }[];
   active: boolean;
   next_delivery_at: string;
   last_sent_at: string | null;
@@ -106,10 +107,12 @@ export function AlertControls() {
   const [alertForm, setAlertForm] = useState<AlertForm>(emptyAlertForm);
   const [alertSaving, setAlertSaving] = useState(false);
   const [alertSaved, setAlertSaved] = useState(false);
+  const [confirmationWarning, setConfirmationWarning] = useState<string | null>(null);
   const [alertError, setAlertError] = useState<string | null>(null);
   const [managedAlerts, setManagedAlerts] = useState<ManagedAlert[]>([]);
   const [alertsLoading, setAlertsLoading] = useState(false);
   const [manageError, setManageError] = useState<string | null>(null);
+  const [manageMessage, setManageMessage] = useState<string | null>(null);
   const [editingAlertId, setEditingAlertId] = useState<string | null>(null);
   const [editForm, setEditForm] = useState<AlertForm>(emptyAlertForm);
   const [editSaving, setEditSaving] = useState(false);
@@ -209,7 +212,8 @@ export function AlertControls() {
         },
         body: JSON.stringify({ ...alertForm, maxArticles: Number(alertForm.maxArticles) }),
       });
-      await getResponseError(response, "Could not save this alert.");
+      const result = await getResponseError(response, "Could not save this alert.");
+      setConfirmationWarning(result.confirmationWarning);
       setAlertSaved(true);
       setAlertForm(emptyAlertForm);
     } catch (error) {
@@ -285,9 +289,10 @@ export function AlertControls() {
         },
         body: JSON.stringify({ ...values, maxArticles: Number(values.maxArticles) }),
       });
-      await getResponseError(response, "Could not save alert changes.");
+      const result = await getResponseError(response, "Could not save alert changes.");
       setEditingAlertId(null);
       await loadManagedAlerts(session);
+      if (result.confirmationWarning) setManageError(result.confirmationWarning);
     } catch (error) {
       setEditError(getErrorMessage(error, "Could not save alert changes."));
     } finally {
@@ -317,6 +322,26 @@ export function AlertControls() {
     }
   }
 
+  async function resendConfirmations(alert: ManagedAlert) {
+    if (!session) return;
+    setPendingAlertId(alert.id);
+    setManageError(null);
+    setManageMessage(null);
+    try {
+      const response = await fetch(`/api/alerts/${alert.id}/confirmations`, {
+        method: "POST",
+        headers: getAuthorization(session),
+      });
+      await getResponseError(response, "Could not send confirmation emails.");
+      await loadManagedAlerts(session);
+      setManageMessage("Confirmation emails sent to pending recipients.");
+    } catch (error) {
+      setManageError(getErrorMessage(error, "Could not send confirmation emails."));
+    } finally {
+      setPendingAlertId(null);
+    }
+  }
+
   async function deleteAlert(alert: ManagedAlert) {
     if (!session || !window.confirm(`Delete the alert for “${alert.search_terms}”?`)) return;
     setPendingAlertId(alert.id);
@@ -339,12 +364,14 @@ export function AlertControls() {
   const openCreate = () => {
     setAlertSaved(false);
     setAlertError(null);
+    setConfirmationWarning(null);
     setModal("create");
   };
 
   const openManage = () => {
     setManageTab("alerts");
     setManageError(null);
+    setManageMessage(null);
     setAccountError(null);
     setModal("manage");
   };
@@ -438,7 +465,7 @@ export function AlertControls() {
             className={`${fieldClass} resize-y`}
           />
           <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">
-            Separate up to 10 addresses with semicolons.
+            Separate up to 10 addresses with semicolons. Each new recipient must confirm before receiving alerts.
           </p>
         </div>
         <label className="flex items-start gap-2 text-xs leading-5 text-slate-600 dark:text-slate-400">
@@ -612,8 +639,9 @@ export function AlertControls() {
               ) : alertSaved ? (
                 <div>
                   <p role="status" className="rounded-lg border border-green-200 bg-green-50 p-3 text-sm text-green-900 dark:border-green-900 dark:bg-green-950 dark:text-green-200">
-                    Alert saved. You can edit it later from Manage. No confirmation emails are sent to alert recipients.
+                    Alert saved. Each recipient must confirm by email before receiving alerts. You can manage the alert later from Manage.
                   </p>
+                  {confirmationWarning && <p role="alert" className="mt-2 text-sm text-red-700 dark:text-red-300">{confirmationWarning}</p>}
                   <button type="button" onClick={() => setModal(null)} className={`${primaryButtonClass} mt-4`}>Done</button>
                 </div>
               ) : (
@@ -683,6 +711,7 @@ export function AlertControls() {
                         </button>
                       </div>
                       {manageError && <p role="alert" className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200">{manageError}</p>}
+                      {manageMessage && <p role="status" className="rounded-lg border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-900 dark:border-green-900 dark:bg-green-950 dark:text-green-200">{manageMessage}</p>}
                       {alertsLoading ? (
                         <p role="status" className="text-sm text-slate-600 dark:text-slate-400">Loading alerts…</p>
                       ) : managedAlerts.length === 0 ? (
@@ -699,12 +728,28 @@ export function AlertControls() {
                                   <p className="mt-1 text-xs text-slate-600 dark:text-slate-400">
                                     {alert.time_span === "today" ? "Today (UTC)" : alert.time_span === "last_3_days" ? "Last 3 days" : "Last week"} · {alert.frequency} · {alert.delivery_time_utc.slice(0, 5)} UTC · Max {alert.max_articles} articles
                                   </p>
-                                  <p className="mt-1 break-all text-xs text-slate-500 dark:text-slate-400">{alert.emails.join("; ")}</p>
+                                  <ul className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                                    {alert.recipients.map((recipient) => (
+                                      <li key={recipient.email} className="break-all">
+                                        {recipient.email} · {recipient.confirmed_at ? "Confirmed" : "Awaiting confirmation"}
+                                      </li>
+                                    ))}
+                                  </ul>
                                   <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">
                                     {alert.active ? "Next delivery: " : "Paused · scheduled for: "}{formatDelivery(alert.next_delivery_at)}
                                   </p>
                                 </div>
                                 <div className="flex shrink-0 flex-wrap gap-1.5">
+                                  {alert.recipients.some((recipient) => !recipient.confirmed_at) && (
+                                    <button
+                                      type="button"
+                                      disabled={pendingAlertId === alert.id}
+                                      onClick={() => void resendConfirmations(alert)}
+                                      className={`${secondaryButtonClass} px-2 py-1 text-xs`}
+                                    >
+                                      Resend confirmation
+                                    </button>
+                                  )}
                                   <button
                                     type="button"
                                     disabled={pendingAlertId === alert.id}

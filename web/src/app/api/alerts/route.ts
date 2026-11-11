@@ -1,6 +1,7 @@
 import { createHmac } from "crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { getAlertUserId } from "@/lib/alert-auth";
+import { sendPendingConfirmations } from "@/lib/alert-confirmation";
 import { getFirstAlertDelivery } from "@/lib/alert-schedule";
 import { validateAlertSettings } from "@/lib/alert-validation";
 import { supabaseAdmin } from "@/lib/supabase-admin";
@@ -26,7 +27,22 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "Could not load your alerts." }, { status: 500 });
   }
 
-  return NextResponse.json({ alerts: data });
+  const alertIds = (data ?? []).map((alert) => alert.id);
+  if (alertIds.length === 0) return NextResponse.json({ alerts: [] });
+  const { data: recipients, error: recipientsError } = await supabaseAdmin
+    .from("chnscraping_alert_recipients")
+    .select("subscription_id, email, confirmed_at")
+    .in("subscription_id", alertIds);
+  if (recipientsError) {
+    console.error("Could not load alert recipient statuses:", recipientsError);
+    return NextResponse.json({ error: "Could not load alert recipient statuses." }, { status: 500 });
+  }
+  return NextResponse.json({
+    alerts: (data ?? []).map((alert) => ({
+      ...alert,
+      recipients: (recipients ?? []).filter((recipient) => recipient.subscription_id === alert.id),
+    })),
+  });
 }
 
 export async function POST(request: NextRequest) {
@@ -92,5 +108,13 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  return NextResponse.json({ subscriptionId: data }, { status: 201 });
+  let confirmationWarning: string | null = null;
+  try {
+    const failed = await sendPendingConfirmations(data, userId);
+    if (failed.length) confirmationWarning = "Some confirmation emails could not be sent. Retry from Manage alerts.";
+  } catch (confirmationError) {
+    console.error("Could not send alert confirmations:", confirmationError);
+    confirmationWarning = "Confirmation emails could not be sent. Retry from Manage alerts.";
+  }
+  return NextResponse.json({ subscriptionId: data, confirmationWarning }, { status: 201 });
 }
