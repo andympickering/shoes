@@ -20,6 +20,7 @@ Scrapes Chinese news websites every 24 hours, stores headlines and story text in
    - `supabase/migrations/009_crawl_type.sql`
    - `supabase/migrations/010_email_alerts.sql`
    - `supabase/migrations/011_alert_accounts.sql`
+   - `supabase/migrations/012_alert_max_articles.sql`
 
 The second migration extends the article records with publisher IDs, content
 fingerprints, and collection timestamps. It also creates URL history, article
@@ -97,28 +98,36 @@ at 17:01 UTC and can also be started manually. This is 18:01 in Rome during
 CET and 19:01 during CEST. It discovers article URLs and stores new ones as
 pending records; it does not extract article text. The sitemap's `robots.txt`
 crawl delay is honored, so a full scan can take several hours. Apply migration
-006 before running this workflow.
+006 and migration 009 before running this workflow.
+
+The `Beijing News Sitemap Discovery` workflow scans
+`https://www.bjnews.com.cn/sitemap.xml` daily at 17:05 UTC and can also be
+started manually. The sitemap is fetched directly because Beijing News'
+`robots.txt` does not advertise it; the site's 5-second crawl delay is honored.
+It stores new URLs as pending `bjnews` records and does not extract article
+text.
 
 The `People's Daily Article Extraction` workflow starts automatically after a
-successful sitemap discovery run and can also be started manually. It scrapes
-up to 1,000 eligible pending records, honoring the publisher's `robots.txt`
-rules and crawl delay, saving extracted articles, and updating discovery
-statuses and crawl-job progress. If fetching or extracting a URL fails, it
-retries once using the equivalent `.cn` or `.com.cn` hostname, upgrading an
-HTTP URL to HTTPS for the retry. It checks the alternate hostname's own
-`robots.txt` rules; URLs explicitly disallowed by `robots.txt` are not retried.
-It may take several hours depending on the crawl delay. Individual article
+successful People's Daily sitemap discovery run and can also be started
+manually. The `Beijing News Article Extraction` workflow does the same for
+Beijing News. Both process up to 1,000 pending records and use the shared
+`scraper.scrape_pending` pipeline with a source-specific adapter and
+`robots.txt` policy. People's Daily extraction retries once using the
+equivalent `.cn` or `.com.cn` hostname, upgrading an HTTP URL to HTTPS;
+Beijing News uses its adapter without hostname retries. Individual article
 extraction failures are counted and recorded without failing the workflow;
 only a fatal workflow error marks the crawl job failed and returns a failing
-Action result.
+Action result. The Beijing News adapter extracts headlines, `.timer`
+publication timestamps, and article paragraphs under `#contentStr`.
 
 ### Email Alerts
 
-Apply migrations `010_email_alerts.sql` and `011_alert_accounts.sql` after the
+Apply migrations `010_email_alerts.sql` through `012_alert_max_articles.sql` after the
 earlier migrations. Migration 011 disables alert subscriptions created before
 account ownership was introduced; recreate them after signing in. The archive
 header's **Alerts** form saves search expressions, lookback windows, recipient
-addresses, and delivery schedules in Supabase. The adjacent **Manage** modal
+addresses, delivery schedules, and a maximum number of articles (1–100) in
+Supabase. Existing alerts default to 25 articles, as before. The adjacent **Manage** modal
 has **Alerts** and **Account** tabs for editing, pausing, resuming, or deleting
 the signed-in user's subscriptions. Alert searches use the same
 `AND`, `OR`, phrase, and parenthesis syntax as the archive. “Today” means since
@@ -145,9 +154,13 @@ Configure these environment variables in Netlify for the deployed web app:
 
 In GitHub repository settings, add `ALERTS_CRON_SECRET` as an Actions secret
 with the same value configured in Netlify, and add `ALERTS_SITE_URL` as an
-Actions variable. The `Email Alert Delivery` workflow calls the protected
-delivery endpoint every five minutes and processes one due alert per run; it
-can also be started manually. Recipients are not sent confirmation emails.
+Actions variable. The `Email Alert Delivery` workflow is triggered by either
+publisher extraction workflow, but only sends after both have succeeded for
+the same UTC run date and branch. Manual alert-delivery runs use the same
+check. It calls the protected delivery endpoint until all due alerts have been
+processed. An alert's configured delivery time marks when it becomes due;
+delivery waits until both successful crawls finish. Recipients are not sent
+confirmation emails.
 The form requires permission to email the listed addresses, and every digest
 includes an unsubscribe link that disables that alert.
 

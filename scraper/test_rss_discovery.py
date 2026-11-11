@@ -1,19 +1,23 @@
 import os
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import ANY, MagicMock, patch
 
 import requests
 
 from .adapters.base import Article
+from .adapters.bjnews import BjnewsAdapter
 from .adapters.people import PeopleAdapter
 from .rss_discovery import (
     ARTICLES_TABLE,
     ARTICLE_USER_AGENT,
+    BJNEWS_ARTICLE_DOMAINS,
+    BJNEWS_ARTICLE_USER_AGENT,
     TABLE,
     ProcessStats,
     SupabaseRest,
     alternate_people_domain_url,
     main,
+    normalize_url,
     process_discoveries,
     read_robots_policy,
 )
@@ -47,6 +51,15 @@ class RssDiscoveryTests(unittest.TestCase):
             "https://usa.people.com.cn/n1/article.html",
         )
         self.assertIsNone(alternate_people_domain_url("https://example.com/article.html"))
+
+    def test_normalize_url_accepts_bjnews_only_when_its_domains_are_selected(self):
+        url = "https://www.bjnews.com.cn/detail/123.html?utm_source=feed"
+
+        self.assertIsNone(normalize_url(url))
+        self.assertEqual(
+            normalize_url(url, BJNEWS_ARTICLE_DOMAINS),
+            "https://www.bjnews.com.cn/detail/123.html",
+        )
 
     @patch("scraper.rss_discovery.read_robots_policy")
     @patch("scraper.rss_discovery.wait_for_crawl_delay")
@@ -96,6 +109,50 @@ class RssDiscoveryTests(unittest.TestCase):
             for call in supabase.request.call_args_list
             if call.args[:2] == ("POST", ARTICLES_TABLE)
         )
+        self.assertEqual(
+            post_article.kwargs["payload"][0]["metadata"]["discovery_method"],
+            "sitemap",
+        )
+
+    @patch("scraper.rss_discovery.read_robots_policy")
+    @patch("scraper.rss_discovery.wait_for_crawl_delay")
+    def test_processes_bjnews_with_source_specific_robots_and_article_metadata(
+        self, _wait, read_robots
+    ):
+        article_url = "https://www.bjnews.com.cn/detail/123.html"
+        article = Article(
+            headline="Beijing News headline",
+            story_text="Beijing News headline and the full article body.",
+            url=article_url,
+        )
+        adapter = MagicMock(spec=BjnewsAdapter)
+        adapter._parse_article.return_value = article
+        read_robots.return_value = self.robots, 5.0
+        supabase = MagicMock()
+        supabase.request.return_value = [{"id": "article-id"}]
+
+        stats = process_discoveries(
+            supabase,
+            [{**self.record, "discovered_url": article_url, "discovery_method": "sitemap"}],
+            adapter,
+            source="bjnews",
+            user_agent=BJNEWS_ARTICLE_USER_AGENT,
+            alternate_url_for=None,
+        )
+
+        self.assertEqual(stats.extracted, 1)
+        read_robots.assert_called_once_with(
+            ANY,
+            article_url,
+            BJNEWS_ARTICLE_USER_AGENT,
+        )
+        self.robots.can_fetch.assert_called_once_with(BJNEWS_ARTICLE_USER_AGENT, article_url)
+        post_article = next(
+            call
+            for call in supabase.request.call_args_list
+            if call.args[:2] == ("POST", ARTICLES_TABLE)
+        )
+        self.assertEqual(post_article.kwargs["payload"][0]["source"], "bjnews")
         self.assertEqual(
             post_article.kwargs["payload"][0]["metadata"]["discovery_method"],
             "sitemap",

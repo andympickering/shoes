@@ -14,6 +14,7 @@ class BjnewsAdapter(BaseAdapter):
     """Scraper for Beijing News / 新京报 (www.bjnews.com.cn)."""
 
     source_id = "bjnews"
+    USER_AGENT = "CHNscraping article extraction; contact repository owner"
 
     LISTING_URLS = [
         "https://www.bjnews.com.cn/",
@@ -25,12 +26,12 @@ class BjnewsAdapter(BaseAdapter):
         re.I,
     )
 
-    def __init__(self, delay_seconds: float = 3.0):
+    def __init__(self, delay_seconds: float = 3.0, user_agent: str | None = None):
         self.delay_seconds = delay_seconds
         self.session = requests.Session()
         self.session.headers.update(
             {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "User-Agent": user_agent or self.USER_AGENT,
                 "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
                 "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
             }
@@ -75,25 +76,35 @@ class BjnewsAdapter(BaseAdapter):
                 return None
 
             published_at = None
-            date_match = re.search(
-                r"(\d{4})-(\d{2})-(\d{2})\s+(\d{2}):(\d{2})",
-                resp.text,
-            )
-            if date_match:
+            timer = soup.select_one(".timer")
+            if timer:
                 try:
-                    published_at = datetime(
-                        int(date_match.group(1)),
-                        int(date_match.group(2)),
-                        int(date_match.group(3)),
-                        int(date_match.group(4)),
-                        int(date_match.group(5)),
-                        0,
+                    published_at = datetime.strptime(
+                        timer.get_text(strip=True), "%Y-%m-%d %H:%M"
                     )
                 except ValueError:
                     pass
+            if not published_at:
+                date_match = re.search(
+                    r"(\d{4})-(\d{2})-(\d{2})\s+(\d{2}):(\d{2})",
+                    resp.text,
+                )
+                if date_match:
+                    try:
+                        published_at = datetime(
+                            int(date_match.group(1)),
+                            int(date_match.group(2)),
+                            int(date_match.group(3)),
+                            int(date_match.group(4)),
+                            int(date_match.group(5)),
+                            0,
+                        )
+                    except ValueError:
+                        pass
 
             story_parts = []
             content_selectors = [
+                "div#contentStr p",
                 "div.article-content p",
                 "div#content p",
                 "div.content p",

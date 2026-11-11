@@ -1,7 +1,8 @@
-"""Discover People's Daily article URLs from its publisher sitemaps."""
+"""Discover article URLs from supported publisher sitemaps."""
 import sys
 import time
 import xml.etree.ElementTree as ET
+from dataclasses import dataclass
 from urllib.parse import urljoin, urlsplit
 
 import requests
@@ -10,6 +11,7 @@ from pathlib import Path
 
 from .rss_discovery import (
     ALLOWED_ARTICLE_DOMAINS,
+    BJNEWS_ARTICLE_DOMAINS,
     BATCH_SIZE,
     SOURCE,
     TABLE,
@@ -20,6 +22,8 @@ from .rss_discovery import (
 
 
 ROBOTS_URL = "https://www.people.com.cn/robots.txt"
+BJNEWS_ROBOTS_URL = "https://www.bjnews.com.cn/robots.txt"
+BJNEWS_SITEMAP_URL = "https://www.bjnews.com.cn/sitemap.xml"
 DEFAULT_CRAWL_DELAY_SECONDS = 120.0
 MAX_DOCUMENT_BYTES = 50 * 1024 * 1024
 MAX_SITEMAP_DOCUMENTS = 500
@@ -30,13 +34,39 @@ USER_AGENT = "CHNscraping sitemap discovery; contact repository owner"
 load_dotenv(Path(__file__).resolve().parents[1] / ".env", override=True)
 
 
+@dataclass(frozen=True)
+class SitemapSource:
+    robots_url: str
+    allowed_domains: tuple[str, ...]
+    sitemap_urls: tuple[str, ...] = ()
+    default_crawl_delay_seconds: float = DEFAULT_CRAWL_DELAY_SECONDS
+    job_type: str = "weekly"
+
+
+SITEMAP_SOURCES = {
+    SOURCE: SitemapSource(
+        robots_url=ROBOTS_URL,
+        allowed_domains=ALLOWED_ARTICLE_DOMAINS,
+    ),
+    "bjnews": SitemapSource(
+        robots_url=BJNEWS_ROBOTS_URL,
+        allowed_domains=BJNEWS_ARTICLE_DOMAINS,
+        sitemap_urls=(BJNEWS_SITEMAP_URL,),
+        default_crawl_delay_seconds=5.0,
+        job_type="daily",
+    ),
+}
+
+
 class SitemapFetchError(RuntimeError):
     def __init__(self, message: str, last_request_at: float | None):
         super().__init__(message)
         self.last_request_at = last_request_at
 
 
-def _allowed_url(url: str) -> bool:
+def _allowed_url(
+    url: str, allowed_domains: tuple[str, ...] = ALLOWED_ARTICLE_DOMAINS
+) -> bool:
     try:
         parts = urlsplit(url)
         hostname = parts.hostname
@@ -49,7 +79,7 @@ def _allowed_url(url: str) -> bool:
     host = hostname.lower()
     return any(
         host == domain or host.endswith("." + domain)
-        for domain in ALLOWED_ARTICLE_DOMAINS
+        for domain in allowed_domains
     )
 
 
@@ -83,10 +113,15 @@ def parse_sitemap_xml(content: bytes) -> tuple[str, list[str]]:
     return document_type, urls
 
 
-def parse_robots_txt(content: str) -> tuple[list[str], float]:
+def parse_robots_txt(
+    content: str,
+    allowed_domains: tuple[str, ...] = ALLOWED_ARTICLE_DOMAINS,
+    default_crawl_delay_seconds: float = DEFAULT_CRAWL_DELAY_SECONDS,
+    require_sitemap: bool = True,
+) -> tuple[list[str], float]:
     """Return allowed sitemap locations and the publisher's crawl delay."""
     sitemap_urls: list[str] = []
-    crawl_delay = DEFAULT_CRAWL_DELAY_SECONDS
+    crawl_delay = default_crawl_delay_seconds
     active_user_agents: list[str] = []
     group_has_directive = False
 
@@ -105,7 +140,7 @@ def parse_robots_txt(content: str) -> tuple[list[str], float]:
             continue
 
         group_has_directive = True
-        if name == "sitemap" and _allowed_url(value):
+        if name == "sitemap" and _allowed_url(value, allowed_domains):
             sitemap_urls.append(value)
         elif name == "crawl-delay" and "*" in active_user_agents:
             try:
@@ -115,7 +150,7 @@ def parse_robots_txt(content: str) -> tuple[list[str], float]:
             if parsed_delay >= 0:
                 crawl_delay = parsed_delay
 
-    if not sitemap_urls:
+    if require_sitemap and not sitemap_urls:
         raise ValueError("robots.txt did not advertise an allowed sitemap")
     return list(dict.fromkeys(sitemap_urls)), crawl_delay
 
@@ -133,14 +168,15 @@ def fetch_document(
     url: str,
     delay_seconds: float,
     last_request_at: float | None,
+    allowed_domains: tuple[str, ...] = ALLOWED_ARTICLE_DOMAINS,
 ) -> tuple[bytes, float]:
     """Fetch one XML/text document without bypassing the site's crawl delay."""
     current_url = url
     redirects = 0
 
     while True:
-        if not _allowed_url(current_url):
-            raise ValueError(f"Refusing URL outside People's Daily domains: {current_url}")
+        if not _allowed_url(current_url, allowed_domains):
+            raise ValueError(f"Refusing URL outside allowed publisher domains: {current_url}")
 
         _wait_for_crawl_delay(delay_seconds, last_request_at)
         request_started_at = time.monotonic()
@@ -189,15 +225,28 @@ def fetch_document(
 
 def read_sitemap_urls(
     session: requests.Session,
+    source: str = SOURCE,
 ) -> tuple[dict[str, tuple[str, str]], list[str]]:
     """Map normalized article URLs to original URLs and their sitemap provenance."""
+    try:
+        config = SITEMAP_SOURCES[source]
+    except KeyError as error:
+        raise ValueError(f"Unsupported sitemap source: {source}") from error
+
     robots_content, last_request_at = fetch_document(
         session,
-        ROBOTS_URL,
+        config.robots_url,
         0,
         None,
+        config.allowed_domains,
     )
-    sitemap_urls, crawl_delay = parse_robots_txt(robots_content.decode("utf-8", errors="replace"))
+    advertised_sitemaps, crawl_delay = parse_robots_txt(
+        robots_content.decode("utf-8", errors="replace"),
+        allowed_domains=config.allowed_domains,
+        default_crawl_delay_seconds=config.default_crawl_delay_seconds,
+        require_sitemap=not config.sitemap_urls,
+    )
+    sitemap_urls = list(config.sitemap_urls or advertised_sitemaps)
 
     article_urls: dict[str, tuple[str, str]] = {}
     errors: list[str] = []
@@ -206,7 +255,7 @@ def read_sitemap_urls(
 
     while pending_sitemaps:
         sitemap_url = pending_sitemaps.pop(0)
-        normalized_sitemap_url = normalize_url(sitemap_url)
+        normalized_sitemap_url = normalize_url(sitemap_url, config.allowed_domains)
         if not normalized_sitemap_url or normalized_sitemap_url in visited_sitemaps:
             continue
         visited_sitemaps.add(normalized_sitemap_url)
@@ -222,6 +271,7 @@ def read_sitemap_urls(
                 sitemap_url,
                 crawl_delay,
                 last_request_at,
+                config.allowed_domains,
             )
             document_type, urls = parse_sitemap_xml(content)
         except (SitemapFetchError, ValueError, ET.ParseError) as error:
@@ -234,29 +284,33 @@ def read_sitemap_urls(
 
         if document_type == "index":
             for url in urls:
-                if _allowed_url(url):
+                if _allowed_url(url, config.allowed_domains):
                     pending_sitemaps.append(url)
                 else:
-                    message = f"Refusing sitemap URL outside People's Daily domains: {url}"
+                    message = f"Refusing sitemap URL outside allowed publisher domains: {url}"
                     errors.append(message)
                     print(message, file=sys.stderr)
             continue
 
         for article_url in urls:
-            normalized_url = normalize_url(article_url)
+            normalized_url = normalize_url(article_url, config.allowed_domains)
             if normalized_url:
                 article_urls.setdefault(normalized_url, (article_url, sitemap_url))
 
     return article_urls, errors
 
 
-def main() -> int:
+def main(source: str = SOURCE) -> int:
     job = None
     supabase = None
     inserted_count = 0
     failed_count = 0
 
     try:
+        try:
+            config = SITEMAP_SOURCES[source]
+        except KeyError as error:
+            raise ValueError(f"Unsupported sitemap source: {source}") from error
         supabase = SupabaseRest()
         timestamp = utc_now()
         job_rows = supabase.request(
@@ -264,8 +318,8 @@ def main() -> int:
             "chnscraping_crawl_jobs",
             payload=[
                 {
-                    "source": SOURCE,
-                    "job_type": "weekly",
+                    "source": source,
+                    "job_type": config.job_type,
                     "crawl_type": "discovery",
                     "status": "running",
                     "started_at": timestamp,
@@ -279,14 +333,14 @@ def main() -> int:
         job = job_rows[0]["id"]
 
         with requests.Session() as session:
-            article_sitemaps, sitemap_errors = read_sitemap_urls(session)
+            article_sitemaps, sitemap_errors = read_sitemap_urls(session, source)
 
         normalized_urls = list(article_sitemaps)
-        existing = supabase.find_existing(normalized_urls)
+        existing = supabase.find_existing(normalized_urls, source)
         records = [
             {
                 "crawl_job_id": job,
-                "source": SOURCE,
+                "source": source,
                 "discovered_url": article_sitemaps[normalized_url][0],
                 "normalized_url": normalized_url,
                 "discovered_from_url": article_sitemaps[normalized_url][1],
@@ -358,4 +412,8 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Discover article URLs from publisher sitemaps")
+    parser.add_argument("--source", choices=sorted(SITEMAP_SOURCES), default=SOURCE)
+    sys.exit(main(parser.parse_args().source))

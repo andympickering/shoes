@@ -2,6 +2,8 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 from .sitemap_discovery import (
+    BJNEWS_ROBOTS_URL,
+    BJNEWS_SITEMAP_URL,
     SitemapFetchError,
     _allowed_url,
     main,
@@ -36,6 +38,12 @@ class SitemapDiscoveryTests(unittest.TestCase):
         self.assertFalse(_allowed_url("https://example.com/sitemap.xml"))
         self.assertFalse(_allowed_url("file:///etc/passwd"))
         self.assertTrue(_allowed_url("https://tw.people.com.cn/sitemap.xml"))
+        self.assertTrue(
+            _allowed_url(
+                "https://www.bjnews.com.cn/sitemap.xml",
+                ("bjnews.com.cn",),
+            )
+        )
 
     def test_parse_robots_sitemap_and_crawl_delay(self):
         robots = """User-agent: *
@@ -50,6 +58,40 @@ Sitemap: http://www.people.cn/sitemap_index.xml
     def test_robots_missing_sitemap_is_an_error(self):
         with self.assertRaisesRegex(ValueError, "did not advertise"):
             parse_robots_txt("User-agent: *\nDisallow: /private\n")
+
+    def test_reads_explicit_bjnews_sitemap_and_robots_delay(self):
+        robots = b"User-agent: *\nCrawl-delay: 5\n"
+        sitemap = b"""<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+          <url><loc>https://www.bjnews.com.cn/detail/123.html</loc></url>
+        </urlset>"""
+
+        def fake_fetch(_session, url, delay, last_request_at, _domains):
+            if url == BJNEWS_ROBOTS_URL:
+                self.assertEqual(delay, 0)
+                self.assertIsNone(last_request_at)
+                return robots, 1.0
+            self.assertEqual(url, BJNEWS_SITEMAP_URL)
+            self.assertEqual(delay, 5.0)
+            self.assertEqual(last_request_at, 1.0)
+            return sitemap, 2.0
+
+        with patch(
+            "scraper.sitemap_discovery.fetch_document",
+            side_effect=fake_fetch,
+        ) as fetch:
+            article_urls, errors = read_sitemap_urls(object(), source="bjnews")
+
+        self.assertEqual(
+            article_urls,
+            {
+                "https://www.bjnews.com.cn/detail/123.html": (
+                    "https://www.bjnews.com.cn/detail/123.html",
+                    BJNEWS_SITEMAP_URL,
+                )
+            },
+        )
+        self.assertEqual(errors, [])
+        self.assertEqual(fetch.call_count, 2)
 
     @patch("scraper.sitemap_discovery.fetch_document")
     def test_reads_sitemap_urls_and_retains_successes_on_child_failure(self, fetch):
@@ -66,7 +108,7 @@ Sitemap: http://www.people.cn/sitemap_index.xml
           <url><loc>http://www.people.com.cn/article.html?utm_source=feed</loc></url>
         </urlset>"""
 
-        def fetch_document(_session, url, _delay, _last_request_at):
+        def fetch_document(_session, url, _delay, _last_request_at, _domains):
             if url == "https://www.people.com.cn/robots.txt":
                 return robots, 1.0
             if url == index_url:
@@ -132,6 +174,46 @@ Sitemap: http://www.people.cn/sitemap_index.xml
                 for call in supabase.request.call_args_list
             )
         )
+
+    @patch("scraper.sitemap_discovery.read_sitemap_urls")
+    @patch("scraper.sitemap_discovery.SupabaseRest")
+    def test_main_records_bjnews_as_its_own_daily_source(
+        self, supabase_factory, read_sitemaps
+    ):
+        article_url = "https://www.bjnews.com.cn/detail/123.html"
+        supabase = MagicMock()
+        supabase.request.side_effect = [
+            [{"id": "job-id"}],
+            [{"id": "discovery-id"}],
+            [],
+        ]
+        supabase.find_existing.return_value = set()
+        supabase_factory.return_value = supabase
+        read_sitemaps.return_value = (
+            {article_url: (article_url, BJNEWS_SITEMAP_URL)},
+            [],
+        )
+
+        with patch("scraper.sitemap_discovery.requests.Session"):
+            self.assertEqual(main(source="bjnews"), 0)
+
+        self.assertEqual(
+            supabase.request.call_args_list[0].kwargs["payload"][0]["source"],
+            "bjnews",
+        )
+        self.assertEqual(
+            supabase.request.call_args_list[0].kwargs["payload"][0]["job_type"],
+            "daily",
+        )
+        insert_call = next(
+            call
+            for call in supabase.request.call_args_list
+            if call.args[:2] == ("POST", "chnscraping_discovery_records")
+        )
+        record = insert_call.kwargs["payload"][0]
+        self.assertEqual(record["source"], "bjnews")
+        self.assertEqual(record["discovery_method"], "sitemap")
+        self.assertEqual(record["discovered_from_url"], BJNEWS_SITEMAP_URL)
 
 
 if __name__ == "__main__":

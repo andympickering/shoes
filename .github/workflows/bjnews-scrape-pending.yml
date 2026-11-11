@@ -1,0 +1,35 @@
+name: Beijing News Article Extraction
+
+on:
+  workflow_dispatch:
+  workflow_run:
+    workflows: ["Beijing News Sitemap Discovery"]
+    types: [completed]
+
+concurrency:
+  group: bjnews-scrape-pending
+  cancel-in-progress: false
+
+jobs:
+  scrape:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install scraper dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r scraper/requirements.txt
+
+      - name: Scrape up to 1,000 pending Beijing News sitemap discoveries
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: python -m scraper.scrape_pending --source bjnews

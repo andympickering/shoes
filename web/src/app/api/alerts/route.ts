@@ -17,7 +17,7 @@ export async function GET(request: NextRequest) {
   const { data, error } = await supabaseAdmin
     .from("chnscraping_alert_subscriptions")
     .select(
-      "id, search_terms, time_span, frequency, delivery_time_utc, emails, active, next_delivery_at, last_sent_at, created_at"
+      "id, search_terms, time_span, frequency, delivery_time_utc, max_articles, emails, active, next_delivery_at, last_sent_at, created_at"
     )
     .eq("owner_user_id", userId)
     .order("created_at", { ascending: false });
@@ -71,6 +71,7 @@ export async function POST(request: NextRequest) {
       p_time_span: settings.timeSpan,
       p_frequency: settings.frequency,
       p_delivery_time_utc: settings.deliveryTimeUtc,
+      p_max_articles: settings.maxArticles,
       p_schedule_day: scheduleDay,
       p_emails: settings.emails,
       p_next_delivery_at: nextDeliveryAt.toISOString(),

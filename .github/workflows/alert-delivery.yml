@@ -1,20 +1,66 @@
 name: Email Alert Delivery
 
 on:
-  schedule:
-    - cron: "*/5 * * * *"
   workflow_dispatch:
+  workflow_run:
+    workflows:
+      - "People's Daily Article Extraction"
+      - "Beijing News Article Extraction"
+    types: [completed]
 
 concurrency:
   group: alert-email-delivery
   cancel-in-progress: false
 
+permissions:
+  actions: read
+
 jobs:
   deliver:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
-    timeout-minutes: 2
+    timeout-minutes: 360
     steps:
-      - name: Deliver one due alert
+      - name: Wait until both publisher extractions succeeded
+        id: crawl-gate
+        uses: actions/github-script@v7
+        env:
+          TRIGGER_CREATED_AT: ${{ github.event.workflow_run.created_at }}
+          TRIGGER_BRANCH: ${{ github.event.workflow_run.head_branch || github.ref_name }}
+        with:
+          script: |
+            const runDate = (process.env.TRIGGER_CREATED_AT || new Date().toISOString()).slice(0, 10);
+            const branch = process.env.TRIGGER_BRANCH;
+            const workflows = [
+              "people-scrape-pending.yml",
+              "bjnews-scrape-pending.yml",
+            ];
+
+            for (const workflow_id of workflows) {
+              const { data } = await github.rest.actions.listWorkflowRuns({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                workflow_id,
+                branch,
+                per_page: 100,
+              });
+              const run = data.workflow_runs.find((candidate) =>
+                candidate.created_at.startsWith(runDate)
+              );
+              if (!run || run.conclusion !== "success") {
+                core.notice(
+                  `Skipping alert delivery: ${workflow_id} has no successful run for ${runDate}.`
+                );
+                core.setOutput("ready", "false");
+                return;
+              }
+            }
+
+            core.info(`Both publisher extractions succeeded for ${runDate}.`);
+            core.setOutput("ready", "true");
+
+      - name: Deliver all due alerts
+        if: steps.crawl-gate.outputs.ready == 'true'
         env:
           ALERTS_CRON_SECRET: ${{ secrets.ALERTS_CRON_SECRET }}
           ALERTS_SITE_URL: ${{ vars.ALERTS_SITE_URL }}
@@ -34,7 +80,16 @@ jobs:
               exit 1
               ;;
           esac
-          curl --location --fail-with-body --silent --show-error --max-time 60 --max-redirs 3 \
-            -X POST "$ALERTS_SITE_URL/api/alerts/send" \
+          while true; do
+            response=$(curl --location --fail-with-body --silent --show-error --max-time 60 --max-redirs 3 \
+              -X POST "$ALERTS_SITE_URL/api/alerts/send" \
             -H "Authorization: Bearer $ALERTS_CRON_SECRET" \
-            -H "Content-Type: application/json"
+              -H "Content-Type: application/json")
+            processed=$(printf '%s' "$response" | jq -er '.processed | select(. == 0 or . == 1)')
+            sent=$(printf '%s' "$response" | jq -er '.sent | select(. == 0 or . == 1)')
+            if [ "$processed" -eq 0 ]; then
+              echo "No more due alerts."
+              break
+            fi
+            echo "Processed one due alert (sent: $sent)."
+          done

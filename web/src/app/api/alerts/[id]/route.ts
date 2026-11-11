@@ -64,6 +64,7 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
       time_span: settings.timeSpan,
       frequency: settings.frequency,
       delivery_time_utc: settings.deliveryTimeUtc,
+      max_articles: settings.maxArticles,
       schedule_day: scheduleDay,
       emails: settings.emails,
       next_delivery_at: nextDeliveryAt.toISOString(),

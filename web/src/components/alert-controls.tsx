@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState, type FormEvent, type RefObject } from "react";
 import type { Session } from "@supabase/supabase-js";
+import { DEFAULT_MAX_ARTICLES, MAX_ALERT_ARTICLES } from "@/lib/alert-validation";
 import { supabase } from "@/lib/supabase";
 
 type Modal = "create" | "manage" | null;
@@ -13,6 +14,7 @@ interface AlertForm {
   timeSpan: string;
   frequency: string;
   deliveryTimeUtc: string;
+  maxArticles: string;
   emails: string;
   consent: boolean;
 }
@@ -23,6 +25,7 @@ interface ManagedAlert {
   time_span: string;
   frequency: string;
   delivery_time_utc: string;
+  max_articles: number;
   emails: string[];
   active: boolean;
   next_delivery_at: string;
@@ -35,6 +38,7 @@ const emptyAlertForm: AlertForm = {
   timeSpan: "today",
   frequency: "daily",
   deliveryTimeUtc: "09:00",
+  maxArticles: String(DEFAULT_MAX_ARTICLES),
   emails: "",
   consent: false,
 };
@@ -82,6 +86,7 @@ function alertToForm(alert: ManagedAlert): AlertForm {
     timeSpan: alert.time_span,
     frequency: alert.frequency,
     deliveryTimeUtc: alert.delivery_time_utc.slice(0, 5),
+    maxArticles: String(alert.max_articles),
     emails: alert.emails.join("; "),
     consent: false,
   };
@@ -202,7 +207,7 @@ export function AlertControls() {
           ...getAuthorization(session),
           "Content-Type": "application/json",
         },
-        body: JSON.stringify(alertForm),
+        body: JSON.stringify({ ...alertForm, maxArticles: Number(alertForm.maxArticles) }),
       });
       await getResponseError(response, "Could not save this alert.");
       setAlertSaved(true);
@@ -278,7 +283,7 @@ export function AlertControls() {
           ...getAuthorization(session),
           "Content-Type": "application/json",
         },
-        body: JSON.stringify(values),
+        body: JSON.stringify({ ...values, maxArticles: Number(values.maxArticles) }),
       });
       await getResponseError(response, "Could not save alert changes.");
       setEditingAlertId(null);
@@ -403,6 +408,20 @@ export function AlertControls() {
               required
               value={form.deliveryTimeUtc}
               onChange={(event) => setForm((current) => ({ ...current, deliveryTimeUtc: event.target.value }))}
+              className={fieldClass}
+            />
+          </div>
+          <div>
+            <label htmlFor="alert-max-articles" className={labelClass}>Max number of articles</label>
+            <input
+              id="alert-max-articles"
+              type="number"
+              required
+              min={1}
+              max={MAX_ALERT_ARTICLES}
+              step={1}
+              value={form.maxArticles}
+              onChange={(event) => setForm((current) => ({ ...current, maxArticles: event.target.value }))}
               className={fieldClass}
             />
           </div>
@@ -678,7 +697,7 @@ export function AlertControls() {
                                 <div className="min-w-0 flex-1">
                                   <p className="break-words text-sm font-semibold text-slate-950 dark:text-white">{alert.search_terms}</p>
                                   <p className="mt-1 text-xs text-slate-600 dark:text-slate-400">
-                                    {alert.time_span === "today" ? "Today (UTC)" : alert.time_span === "last_3_days" ? "Last 3 days" : "Last week"} · {alert.frequency} · {alert.delivery_time_utc.slice(0, 5)} UTC
+                                    {alert.time_span === "today" ? "Today (UTC)" : alert.time_span === "last_3_days" ? "Last 3 days" : "Last week"} · {alert.frequency} · {alert.delivery_time_utc.slice(0, 5)} UTC · Max {alert.max_articles} articles
                                   </p>
                                   <p className="mt-1 break-all text-xs text-slate-500 dark:text-slate-400">{alert.emails.join("; ")}</p>
                                   <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">

@@ -1,14 +1,18 @@
-"""Extract articles from pending People's Daily sitemap discoveries."""
+"""Extract articles from pending publisher sitemap discoveries."""
+import argparse
 import sys
 
 from dotenv import load_dotenv
 from pathlib import Path
 
+from .adapters.bjnews import BjnewsAdapter
 from .adapters.people import PeopleAdapter
 from .rss_discovery import (
     ARTICLE_USER_AGENT,
+    BJNEWS_ARTICLE_USER_AGENT,
     ProcessStats,
     SupabaseRest,
+    alternate_people_domain_url,
     process_discoveries,
     utc_now,
 )
@@ -16,18 +20,27 @@ from .rss_discovery import (
 
 MAX_RECORDS = 1000
 JOBS_TABLE = "chnscraping_crawl_jobs"
+SOURCE_ADAPTERS = {
+    "people": (PeopleAdapter, ARTICLE_USER_AGENT, alternate_people_domain_url),
+    "bjnews": (BjnewsAdapter, BJNEWS_ARTICLE_USER_AGENT, None),
+}
 
 load_dotenv(Path(__file__).resolve().parents[1] / ".env", override=True)
 
 
-def main() -> int:
+def main(source: str = "people") -> int:
     job = None
     supabase = None
     try:
+        try:
+            adapter_type, user_agent, alternate_url_for = SOURCE_ADAPTERS[source]
+        except KeyError as error:
+            raise ValueError(f"Unsupported extraction source: {source}") from error
+
         supabase = SupabaseRest()
-        records = supabase.find_pending_records(MAX_RECORDS)
+        records = supabase.find_pending_records(MAX_RECORDS, source)
         if not records:
-            print("No eligible People's Daily sitemap discoveries to process.")
+            print(f"No eligible {source} sitemap discoveries to process.")
             return 0
 
         started_at = utc_now()
@@ -36,7 +49,7 @@ def main() -> int:
             JOBS_TABLE,
             payload=[
                 {
-                    "source": "people",
+                    "source": source,
                     "job_type": "manual",
                     "crawl_type": "extraction",
                     "status": "running",
@@ -77,13 +90,16 @@ def main() -> int:
                 f"{stats.failed} failed, {stats.restricted} restricted."
             )
 
-        adapter = PeopleAdapter(delay_seconds=0, user_agent=ARTICLE_USER_AGENT)
+        adapter = adapter_type(delay_seconds=0, user_agent=user_agent)
         try:
             stats = process_discoveries(
                 supabase,
                 records,
                 adapter,
                 on_record_complete=update_progress,
+                source=source,
+                user_agent=user_agent,
+                alternate_url_for=alternate_url_for,
             )
         finally:
             adapter.session.close()
@@ -134,4 +150,6 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    parser = argparse.ArgumentParser(description="Extract pending sitemap discoveries")
+    parser.add_argument("--source", choices=sorted(SOURCE_ADAPTERS), default="people")
+    sys.exit(main(parser.parse_args().source))

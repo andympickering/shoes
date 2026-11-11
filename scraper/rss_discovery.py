@@ -13,6 +13,7 @@ from dotenv import load_dotenv
 from pathlib import Path
 
 from .adapters.base import Article
+from .adapters.bjnews import BjnewsAdapter
 from .adapters.people import PeopleAdapter
 
 
@@ -23,7 +24,9 @@ ARTICLES_TABLE = "chnscraping_articles"
 BATCH_SIZE = 50
 TRACKING_PARAMETERS = {"fbclid", "gclid", "dclid", "mc_cid", "mc_eid"}
 ALLOWED_ARTICLE_DOMAINS = ("people.cn", "people.com.cn")
+BJNEWS_ARTICLE_DOMAINS = ("bjnews.com.cn",)
 ARTICLE_USER_AGENT = PeopleAdapter.USER_AGENT
+BJNEWS_ARTICLE_USER_AGENT = BjnewsAdapter.USER_AGENT
 DEFAULT_CRAWL_DELAY_SECONDS = 3.0
 
 load_dotenv(Path(__file__).resolve().parents[1] / ".env", override=True)
@@ -33,13 +36,15 @@ def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def normalize_url(url: str) -> str | None:
+def normalize_url(
+    url: str, allowed_domains: tuple[str, ...] = ALLOWED_ARTICLE_DOMAINS
+) -> str | None:
     parts = urlsplit(url.strip())
     if parts.scheme.lower() not in ("http", "https") or not parts.hostname:
         return None
 
     host = parts.hostname.lower()
-    if not any(host == domain or host.endswith("." + domain) for domain in ALLOWED_ARTICLE_DOMAINS):
+    if not any(host == domain or host.endswith("." + domain) for domain in allowed_domains):
         return None
 
     port = parts.port
@@ -138,7 +143,9 @@ class SupabaseRest:
         ]
         return "in.(" + ",".join(quoted) + ")"
 
-    def find_existing(self, normalized_urls: list[str]) -> set[str]:
+    def find_existing(
+        self, normalized_urls: list[str], source: str = SOURCE
+    ) -> set[str]:
         existing: set[str] = set()
         for start in range(0, len(normalized_urls), BATCH_SIZE):
             batch = normalized_urls[start : start + BATCH_SIZE]
@@ -147,7 +154,7 @@ class SupabaseRest:
                 TABLE,
                 params={
                     "select": "normalized_url",
-                    "source": f"eq.{SOURCE}",
+                    "source": f"eq.{source}",
                     "normalized_url": self.in_filter(batch),
                     "limit": str(BATCH_SIZE),
                 },
@@ -155,7 +162,9 @@ class SupabaseRest:
             existing.update(row["normalized_url"] for row in rows)
         return existing
 
-    def find_pending(self, normalized_urls: list[str]) -> list[dict[str, Any]]:
+    def find_pending(
+        self, normalized_urls: list[str], source: str = SOURCE
+    ) -> list[dict[str, Any]]:
         pending: list[dict[str, Any]] = []
         for start in range(0, len(normalized_urls), BATCH_SIZE):
             batch = normalized_urls[start : start + BATCH_SIZE]
@@ -165,7 +174,7 @@ class SupabaseRest:
                     TABLE,
                     params={
                         "select": "id,discovered_url,normalized_url,attempts",
-                        "source": f"eq.{SOURCE}",
+                        "source": f"eq.{source}",
                         "discovery_method": "eq.rss",
                         "normalized_url": self.in_filter(batch),
                         "processing_status": "in.(pending,processing,failed)",
@@ -176,13 +185,15 @@ class SupabaseRest:
             )
         return pending
 
-    def find_pending_records(self, limit: int) -> list[dict[str, Any]]:
+    def find_pending_records(
+        self, limit: int, source: str = SOURCE
+    ) -> list[dict[str, Any]]:
         return self.request(
             "GET",
             TABLE,
             params={
                 "select": "id,discovered_url,normalized_url,attempts,discovery_method",
-                "source": f"eq.{SOURCE}",
+                "source": f"eq.{source}",
                 "discovery_method": "eq.sitemap",
                 "processing_status": "in.(pending,processing,failed)",
                 "attempts": "lt.3",
@@ -202,13 +213,15 @@ class ProcessStats:
 
 
 def read_robots_policy(
-    session: requests.Session, article_url: str
+    session: requests.Session,
+    article_url: str,
+    user_agent: str = ARTICLE_USER_AGENT,
 ) -> tuple[RobotFileParser, float]:
     parts = urlsplit(article_url)
     robots_url = urlunsplit((parts.scheme, parts.netloc, "/robots.txt", "", ""))
     response = session.get(
         robots_url,
-        headers={"User-Agent": ARTICLE_USER_AGENT},
+        headers={"User-Agent": user_agent},
         timeout=(15, 60),
     )
     if response.status_code == 404:
@@ -221,7 +234,7 @@ def read_robots_policy(
 
     parser = RobotFileParser(robots_url)
     parser.parse(lines)
-    delay = parser.crawl_delay(ARTICLE_USER_AGENT)
+    delay = parser.crawl_delay(user_agent)
     return parser, float(delay if delay is not None else DEFAULT_CRAWL_DELAY_SECONDS)
 
 
@@ -248,9 +261,10 @@ def save_article(
     supabase: SupabaseRest,
     article: Article,
     discovery_method: str = "rss",
+    source: str = SOURCE,
 ) -> tuple[str, str]:
     payload = {
-        "source": SOURCE,
+        "source": source,
         "headline": article.headline,
         "story_text": article.story_text,
         "url": article.url,
@@ -281,9 +295,12 @@ def save_article(
 def process_discoveries(
     supabase: SupabaseRest,
     records: list[dict[str, Any]],
-    adapter: PeopleAdapter,
+    adapter: PeopleAdapter | BjnewsAdapter,
     robots_session: requests.Session | None = None,
     on_record_complete: Callable[[dict[str, Any], ProcessStats], None] | None = None,
+    source: str = SOURCE,
+    user_agent: str = ARTICLE_USER_AGENT,
+    alternate_url_for: Callable[[str], str | None] | None = alternate_people_domain_url,
 ) -> ProcessStats:
     stats = ProcessStats()
     policies: dict[str, tuple[RobotFileParser, float]] = {}
@@ -305,8 +322,8 @@ def process_discoveries(
                     last_attempt_at=utc_now(),
                     error_message=None,
                 )
-                alternate_url = alternate_people_domain_url(article_url)
                 candidate_urls = [article_url]
+                alternate_url = alternate_url_for(article_url) if alternate_url_for else None
                 if alternate_url and alternate_url != article_url:
                     candidate_urls.append(alternate_url)
 
@@ -326,14 +343,16 @@ def process_discoveries(
 
                     try:
                         if origin_key not in policies:
-                            policies[origin_key] = read_robots_policy(session, candidate_url)
+                            policies[origin_key] = read_robots_policy(
+                                session, candidate_url, user_agent
+                            )
                             last_request_by_origin[origin_key] = time.monotonic()
                         robots, delay_seconds = policies[origin_key]
                     except requests.RequestException as error:
                         errors.append(f"{candidate_url}: {error}")
                         continue
 
-                    if not robots.can_fetch(ARTICLE_USER_AGENT, candidate_url):
+                    if not robots.can_fetch(user_agent, candidate_url):
                         if candidate_url == article_url:
                             original_restricted = True
                             break
@@ -390,6 +409,7 @@ def process_discoveries(
                     supabase,
                     article,
                     record.get("discovery_method", "rss"),
+                    source,
                 )
                 update_discovery_record(
                     supabase,

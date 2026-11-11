@@ -25,6 +25,16 @@ class ScrapePendingTests(unittest.TestCase):
             },
         )
 
+    def test_selects_pending_records_for_the_requested_source(self):
+        supabase = MagicMock(spec=SupabaseRest)
+
+        SupabaseRest.find_pending_records(supabase, MAX_RECORDS, "bjnews")
+
+        self.assertEqual(
+            supabase.request.call_args.kwargs["params"]["source"],
+            "eq.bjnews",
+        )
+
     @patch("scraper.scrape_pending.SupabaseRest")
     def test_completes_batch_with_record_failures_and_updates_progress(
         self, supabase_factory
@@ -38,14 +48,16 @@ class ScrapePendingTests(unittest.TestCase):
         supabase.request.return_value = [{"id": "crawl-job-id"}]
         supabase_factory.return_value = supabase
 
-        def process_records(_supabase, selected_records, _adapter, on_record_complete):
+        def process_records(
+            _supabase, selected_records, _adapter, on_record_complete, **_kwargs
+        ):
             on_record_complete(selected_records[0], ProcessStats(extracted=1))
             return ProcessStats(extracted=1, failed=1, errors=["article failed"])
 
         with patch("scraper.scrape_pending.process_discoveries", side_effect=process_records):
             self.assertEqual(main(), 0)
 
-        supabase.find_pending_records.assert_called_once_with(MAX_RECORDS)
+        supabase.find_pending_records.assert_called_once_with(MAX_RECORDS, "people")
         job_create = supabase.request.call_args_list[0]
         self.assertEqual(job_create.args[:2], ("POST", JOBS_TABLE))
         self.assertEqual(job_create.kwargs["payload"][0]["job_type"], "manual")
@@ -100,6 +112,36 @@ class ScrapePendingTests(unittest.TestCase):
 
         supabase.request.assert_not_called()
         supabase.session.close.assert_called_once()
+
+    @patch("scraper.scrape_pending.process_discoveries")
+    @patch("scraper.scrape_pending.SupabaseRest")
+    def test_runs_bjnews_extraction_with_its_adapter_and_source(
+        self, supabase_factory, process_records
+    ):
+        supabase = MagicMock()
+        supabase.find_pending_records.return_value = [
+            {"id": "bjnews-record", "discovered_url": "https://www.bjnews.com.cn/detail/123.html"}
+        ]
+        supabase.request.return_value = [{"id": "crawl-job-id"}]
+        supabase_factory.return_value = supabase
+        process_records.return_value = ProcessStats(extracted=1)
+
+        self.assertEqual(main(source="bjnews"), 0)
+
+        supabase.find_pending_records.assert_called_once_with(MAX_RECORDS, "bjnews")
+        self.assertEqual(
+            supabase.request.call_args_list[0].kwargs["payload"][0]["source"],
+            "bjnews",
+        )
+        process_records.assert_called_once()
+        self.assertEqual(process_records.call_args.kwargs["source"], "bjnews")
+        self.assertIsNone(process_records.call_args.kwargs["alternate_url_for"])
+        adapter = process_records.call_args.args[2]
+        self.assertEqual(adapter.source_id, "bjnews")
+        self.assertEqual(
+            adapter.session.headers["User-Agent"],
+            "CHNscraping article extraction; contact repository owner",
+        )
 
 
 if __name__ == "__main__":

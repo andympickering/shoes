@@ -8,8 +8,12 @@ export interface AlertSettings {
   timeSpan: AlertTimeSpan;
   frequency: AlertFrequency;
   deliveryTimeUtc: string;
+  maxArticles: number;
   emails: string[];
 }
+
+export const DEFAULT_MAX_ARTICLES = 25;
+export const MAX_ALERT_ARTICLES = 100;
 
 const timeSpans: AlertTimeSpan[] = ["today", "last_3_days", "last_week"];
 const frequencies: AlertFrequency[] = ["daily", "weekly", "monthly"];
@@ -52,6 +56,16 @@ export function validateAlertSettings(value: unknown) {
     return { error: "Enter a valid UTC delivery time." } as const;
   }
 
+  const maxArticles = value.maxArticles;
+  if (
+    typeof maxArticles !== "number" ||
+    !Number.isInteger(maxArticles) ||
+    maxArticles < 1 ||
+    maxArticles > MAX_ALERT_ARTICLES
+  ) {
+    return { error: `Max number of articles must be a whole number between 1 and ${MAX_ALERT_ARTICLES}.` } as const;
+  }
+
   if (value.consent !== true) {
     return {
       error: "Confirm that the listed recipients agreed to receive alerts.",
@@ -86,6 +100,7 @@ export function validateAlertSettings(value: unknown) {
       timeSpan: timeSpan as AlertTimeSpan,
       frequency: frequency as AlertFrequency,
       deliveryTimeUtc,
+      maxArticles,
       emails,
     } satisfies AlertSettings,
   } as const;
