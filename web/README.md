@@ -20,6 +20,11 @@ Keep this server-only; never prefix it with `NEXT_PUBLIC_`. Apply the Supabase
 migration `014_private_archive.sql` before deploying the gate so anonymous
 database table/RPC reads are revoked.
 
+After deploying, check the site in a private browser window: the home page
+should redirect to `/login`, and an unauthenticated request to `/api/articles`
+should return HTTP 401. Next.js discovers the access middleware at
+`web/src/middleware.ts` alongside `src/app`.
+
 In Supabase Authentication settings:
 
 1. Enable the Email provider and disable **Allow new users to sign up**. This

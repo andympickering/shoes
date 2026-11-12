@@ -1,4 +1,5 @@
 import { createServerClient, type CookieOptions } from "@supabase/ssr";
+import { isAuthSessionMissingError } from "@supabase/supabase-js";
 import { NextRequest, NextResponse } from "next/server";
 
 const publicPaths = new Set([
@@ -37,7 +38,7 @@ export async function middleware(request: NextRequest) {
   });
 
   const { data, error } = await supabase.auth.getUser();
-  if (error) {
+  if (error && !isAuthSessionMissingError(error)) {
     console.error("Could not verify site login:", error);
     return NextResponse.json(
       { error: "Could not verify your login. Please try again." },
@@ -47,7 +48,12 @@ export async function middleware(request: NextRequest) {
   if (data.user) return response;
 
   if (pathname.startsWith("/api/")) {
-    return NextResponse.json({ error: "Sign in to access this resource." }, { status: 401 });
+    const unauthorized = NextResponse.json(
+      { error: "Sign in to access this resource." },
+      { status: 401 }
+    );
+    response.cookies.getAll().forEach((cookie) => unauthorized.cookies.set(cookie));
+    return unauthorized;
   }
 
   const loginUrl = request.nextUrl.clone();
@@ -63,5 +69,5 @@ export async function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/((?!_next/static|_next/image|favicon.ico|mao-banner.png|.*\\.).*)"],
+  matcher: ["/((?!_next/static|_next/image|favicon\\.ico$|mao-banner\\.png$).*)"],
 };
