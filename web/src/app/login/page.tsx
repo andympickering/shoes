@@ -2,7 +2,7 @@
 
 import { useEffect, useState, type FormEvent } from "react";
 import { getSafeRedirectPath } from "@/lib/auth-redirect";
-import { supabase } from "@/lib/supabase-browser";
+import { handleAuthLink, sendPasswordSetupEmail, supabase } from "@/lib/supabase-browser";
 
 const inputClass =
   "w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-red-700 focus:outline-none focus:ring-2 focus:ring-red-700/20 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100";
@@ -17,14 +17,17 @@ function getReturnPath() {
 export default function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState<"sign-in" | "recovery" | null>(null);
   const [checkingSession, setCheckingSession] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
 
   useEffect(() => {
     const linkError = new URLSearchParams(window.location.search).get("error");
     if (linkError === "invalid-link") {
       setError("That invite or password link is invalid or has expired. Ask for a new one.");
+    } else if (linkError === "auth-unavailable") {
+      setError("Could not complete the authentication link. Please try again or ask for a new one.");
     }
 
     if (!supabase) {
@@ -33,8 +36,15 @@ export default function LoginPage() {
       return;
     }
 
+    const client = supabase;
     let active = true;
-    supabase.auth.getSession().then(({ data, error: sessionError }) => {
+    handleAuthLink().then(async (handled) => {
+      if (handled || !active) return;
+      if (linkError === "invalid-link" || linkError === "auth-unavailable") {
+        setCheckingSession(false);
+        return;
+      }
+      const { data, error: sessionError } = await client.auth.getSession();
       if (!active) return;
       if (sessionError) setError(sessionError.message);
       if (data.session) {
@@ -56,8 +66,9 @@ export default function LoginPage() {
       return;
     }
 
-    setBusy(true);
+    setBusy("sign-in");
     setError(null);
+    setMessage(null);
     try {
       const { error: signInError } = await supabase.auth.signInWithPassword({
         email: email.trim(),
@@ -69,7 +80,27 @@ export default function LoginPage() {
       setError(
         signInError instanceof Error ? signInError.message : "Could not sign in."
       );
-      setBusy(false);
+      setBusy(null);
+    }
+  }
+
+  async function sendSetupEmail() {
+    if (!email.trim()) {
+      setMessage(null);
+      setError("Enter your email address to receive a password setup link.");
+      return;
+    }
+
+    setBusy("recovery");
+    setError(null);
+    setMessage(null);
+    try {
+      await sendPasswordSetupEmail(email.trim());
+      setMessage("If an account exists for that email, a password setup link has been sent.");
+    } catch (sendError) {
+      setError(sendError instanceof Error ? sendError.message : "Could not send the password setup email.");
+    } finally {
+      setBusy(null);
     }
   }
 
@@ -124,12 +155,25 @@ export default function LoginPage() {
               {error}
             </p>
           )}
+          {message && (
+            <p role="status" className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200">
+              {message}
+            </p>
+          )}
           <button
             type="submit"
-            disabled={busy || checkingSession || !supabase}
+            disabled={busy !== null || checkingSession || !supabase}
             className="w-full rounded-lg border border-amber-400 bg-red-700 px-4 py-2 text-sm font-semibold text-amber-200 shadow-sm hover:bg-red-800 disabled:cursor-wait disabled:opacity-60 focus:outline-none focus:ring-2 focus:ring-red-700/30 focus:ring-offset-2"
           >
-            {checkingSession ? "Checking account…" : busy ? "Signing in…" : "Sign in"}
+            {checkingSession ? "Checking account…" : busy === "sign-in" ? "Signing in…" : "Sign in"}
+          </button>
+          <button
+            type="button"
+            onClick={sendSetupEmail}
+            disabled={busy !== null || checkingSession || !supabase}
+            className="w-full text-sm font-medium text-red-800 underline hover:text-red-900 disabled:cursor-wait disabled:opacity-60 dark:text-red-300 dark:hover:text-red-200"
+          >
+            {busy === "recovery" ? "Sending link…" : "Set or reset your password"}
           </button>
         </form>
       </section>

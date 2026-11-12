@@ -33,8 +33,11 @@ In Supabase Authentication settings:
 2. Set the Site URL to the site's origin and add
    `https://your-site.example/auth/callback` to the allowed redirect URLs (also
    add `http://localhost:3000/auth/callback` for local testing).
-3. Invite users from Authentication > Users. Set the invite redirect URL to
-   `/auth/callback`. Update the **Invite user** email template's link to:
+3. Invite users from Authentication > Users. The default Supabase invitation
+   link redirects to the Site URL, where the app exchanges the returned session
+   for password setup. The redirect URL may also be set to `/auth/callback`.
+   Alternatively, to use the server-side token-hash callback, update the
+   **Invite user** email template's link to:
 
    ```html
    <a href="{{ .SiteURL }}/auth/callback?token_hash={{ .TokenHash }}&amp;type=invite">
@@ -42,7 +45,11 @@ In Supabase Authentication settings:
    </a>
    ```
 
-   Invited users follow that link, set a password, then sign in at `/login`.
+   Invited users follow the link and set a password before accessing the archive.
+   The same flow supports Supabase password-recovery links. If a link has
+   already been used or has expired, use **Set or reset your password** on the
+   login page to request a new link. Recovery links use the Site URL, which
+   should be an allowed redirect URL.
 
 ## Getting Started
 
