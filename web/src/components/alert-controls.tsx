@@ -3,11 +3,10 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent, type RefObject } from "react";
 import type { Session } from "@supabase/supabase-js";
 import { DEFAULT_MAX_ARTICLES, MAX_ALERT_ARTICLES } from "@/lib/alert-validation";
-import { supabase } from "@/lib/supabase";
+import { supabase } from "@/lib/supabase-browser";
 
 type Modal = "create" | "manage" | null;
 type ManageTab = "alerts" | "account";
-type AccountMode = "sign_in" | "sign_up";
 
 interface AlertForm {
   searchTerms: string;
@@ -98,12 +97,10 @@ export function AlertControls() {
   const [manageTab, setManageTab] = useState<ManageTab>("alerts");
   const [session, setSession] = useState<Session | null>(null);
   const [sessionLoading, setSessionLoading] = useState(true);
-  const [accountMode, setAccountMode] = useState<AccountMode>("sign_in");
   const [accountEmail, setAccountEmail] = useState("");
   const [accountPassword, setAccountPassword] = useState("");
   const [accountBusy, setAccountBusy] = useState(false);
   const [accountError, setAccountError] = useState<string | null>(null);
-  const [accountMessage, setAccountMessage] = useState<string | null>(null);
   const [alertForm, setAlertForm] = useState<AlertForm>(emptyAlertForm);
   const [alertSaving, setAlertSaving] = useState(false);
   const [alertSaved, setAlertSaved] = useState(false);
@@ -144,7 +141,6 @@ export function AlertControls() {
       setAccountError(null);
       if (newSession) {
         setAccountPassword("");
-        setAccountMessage(null);
       }
     });
     return () => {
@@ -231,27 +227,12 @@ export function AlertControls() {
     }
     setAccountBusy(true);
     setAccountError(null);
-    setAccountMessage(null);
     try {
-      if (accountMode === "sign_in") {
-        const { error } = await supabase.auth.signInWithPassword({
-          email: accountEmail.trim(),
-          password: accountPassword,
-        });
-        if (error) throw error;
-      } else {
-        const { data, error } = await supabase.auth.signUp({
-          email: accountEmail.trim(),
-          password: accountPassword,
-          options: { emailRedirectTo: window.location.origin },
-        });
-        if (error) throw error;
-        if (!data.session) {
-          setAccountMessage(
-            "Account created. Check your email to confirm the account, then sign in here."
-          );
-        }
-      }
+      const { error } = await supabase.auth.signInWithPassword({
+        email: accountEmail.trim(),
+        password: accountPassword,
+      });
+      if (error) throw error;
     } catch (error) {
       setAccountError(getErrorMessage(error, "Could not authenticate."));
     } finally {
@@ -268,7 +249,7 @@ export function AlertControls() {
       if (error) throw error;
       setManagedAlerts([]);
       setEditingAlertId(null);
-      setAccountMessage("You have signed out.");
+      window.location.replace("/login");
     } catch (error) {
       setAccountError(getErrorMessage(error, "Could not sign out."));
     } finally {
@@ -498,23 +479,6 @@ export function AlertControls() {
 
     return (
       <form className="space-y-3" onSubmit={saveAccount}>
-        <div className="flex gap-2 border-b border-slate-200 pb-2 dark:border-slate-800">
-          {(["sign_in", "sign_up"] as const).map((mode) => (
-            <button
-              key={mode}
-              type="button"
-              aria-pressed={accountMode === mode}
-              onClick={() => {
-                setAccountMode(mode);
-                setAccountError(null);
-                setAccountMessage(null);
-              }}
-              className={`rounded-md px-3 py-1.5 text-sm font-medium ${accountMode === mode ? "bg-red-700 text-amber-200" : "text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"}`}
-            >
-              {mode === "sign_in" ? "Sign in" : "Create account"}
-            </button>
-          ))}
-        </div>
         <div>
           <label htmlFor="account-email" className={labelClass}>Email</label>
           <input
@@ -533,22 +497,15 @@ export function AlertControls() {
             id="account-password"
             type="password"
             required
-            minLength={8}
-            autoComplete={accountMode === "sign_in" ? "current-password" : "new-password"}
+            autoComplete="current-password"
             value={accountPassword}
             onChange={(event) => setAccountPassword(event.target.value)}
             className={fieldClass}
           />
-          {accountMode === "sign_up" && (
-            <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">
-              Use at least 8 characters. Supabase may ask you to confirm your email before signing in.
-            </p>
-          )}
         </div>
-        {accountMessage && <p role="status" className="rounded-lg border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-900 dark:border-green-900 dark:bg-green-950 dark:text-green-200">{accountMessage}</p>}
         {accountError && <p role="alert" className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200">{accountError}</p>}
         <button type="submit" className={primaryButtonClass} disabled={accountBusy || sessionLoading}>
-          {accountBusy ? "Please wait..." : accountMode === "sign_in" ? "Sign in" : "Create account"}
+          {accountBusy ? "Please wait..." : "Sign in"}
         </button>
       </form>
     );
@@ -623,7 +580,7 @@ export function AlertControls() {
               ) : !session ? (
                 <div className="space-y-3">
                   <p className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200">
-                    Sign in to an account before creating alerts. Your account lets you manage these subscriptions later.
+                    Sign in to an invited account before creating alerts. Your account lets you manage these subscriptions later.
                   </p>
                   <button
                     type="button"
@@ -633,7 +590,7 @@ export function AlertControls() {
                     }}
                     className={primaryButtonClass}
                   >
-                    Sign in or create account
+                    Sign in
                   </button>
                 </div>
               ) : alertSaved ? (
@@ -691,7 +648,7 @@ export function AlertControls() {
                   ) : !session ? (
                     <div className="space-y-3">
                       <p className="text-sm text-slate-600 dark:text-slate-400">
-                        Sign in to view and manage alerts. Create an account if you don’t have one yet.
+                        Sign in to view and manage alerts. Contact the site administrator if you need an account.
                       </p>
                       {renderAccountPanel()}
                     </div>

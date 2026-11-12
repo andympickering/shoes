@@ -29,6 +29,8 @@ MAX_DOCUMENT_BYTES = 50 * 1024 * 1024
 MAX_SITEMAP_DOCUMENTS = 500
 MAX_REDIRECTS = 5
 REQUEST_TIMEOUT = (15, 60)
+MAX_REQUEST_ATTEMPTS = 3
+RETRY_DELAY_SECONDS = 5.0
 USER_AGENT = "CHNscraping sitemap discovery; contact repository owner"
 
 load_dotenv(Path(__file__).resolve().parents[1] / ".env", override=True)
@@ -178,21 +180,34 @@ def fetch_document(
         if not _allowed_url(current_url, allowed_domains):
             raise ValueError(f"Refusing URL outside allowed publisher domains: {current_url}")
 
-        _wait_for_crawl_delay(delay_seconds, last_request_at)
-        request_started_at = time.monotonic()
-        try:
-            response = session.get(
-                current_url,
-                headers={"User-Agent": USER_AGENT},
-                timeout=REQUEST_TIMEOUT,
-                allow_redirects=False,
-            )
-        except requests.RequestException as error:
-            raise SitemapFetchError(
-                f"Request failed while fetching {current_url}: {error}",
-                request_started_at,
-            ) from error
-        last_request_at = time.monotonic()
+        for attempt in range(MAX_REQUEST_ATTEMPTS):
+            retry_delay = RETRY_DELAY_SECONDS * (2 ** (attempt - 1)) if attempt else 0
+            _wait_for_crawl_delay(max(delay_seconds, retry_delay), last_request_at)
+            try:
+                response = session.get(
+                    current_url,
+                    headers={"User-Agent": USER_AGENT},
+                    timeout=REQUEST_TIMEOUT,
+                    allow_redirects=False,
+                )
+            except requests.RequestException as error:
+                last_request_at = time.monotonic()
+                if (
+                    isinstance(error, (requests.ConnectionError, requests.Timeout))
+                    and attempt + 1 < MAX_REQUEST_ATTEMPTS
+                ):
+                    print(
+                        f"Request failed while fetching {current_url} "
+                        f"(attempt {attempt + 1}/{MAX_REQUEST_ATTEMPTS}); retrying: {error}",
+                        file=sys.stderr,
+                    )
+                    continue
+                raise SitemapFetchError(
+                    f"Request failed while fetching {current_url}: {error}",
+                    last_request_at,
+                ) from error
+            last_request_at = time.monotonic()
+            break
 
         if response.is_redirect or response.is_permanent_redirect:
             redirects += 1

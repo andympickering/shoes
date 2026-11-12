@@ -2,6 +2,7 @@
 
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
+import { formatDate } from "@/lib/format-date";
 import { getSourceLabel } from "@/lib/source-label";
 
 interface Article {
@@ -10,6 +11,7 @@ interface Article {
   headline: string;
   story_text: string;
   url: string;
+  published_at: string | null;
 }
 
 export default function ArticlePage() {
@@ -62,12 +64,19 @@ export default function ArticlePage() {
       </header>
 
       <article className="mx-auto max-w-4xl px-4 py-8 sm:px-6 sm:py-12">
-        <a
-          href="/"
-          className="mb-8 inline-flex items-center gap-2 text-sm font-medium text-red-800 hover:text-red-950 focus:outline-none focus:ring-2 focus:ring-red-700 dark:text-red-300 dark:hover:text-red-200"
-        >
-          <span aria-hidden="true">&larr;</span> Back to archive
-        </a>
+        <div className="mb-8 flex items-start justify-between gap-4">
+          <a
+            href="/"
+            className="inline-flex shrink-0 items-center gap-2 text-sm font-medium text-red-800 hover:text-red-950 focus:outline-none focus:ring-2 focus:ring-red-700 dark:text-red-300 dark:hover:text-red-200"
+          >
+            <span aria-hidden="true">&larr;</span> Back to archive
+          </a>
+          {!loading && article && (
+            <p className="min-w-0 text-right text-xs text-slate-400 dark:text-slate-500">
+              Article ID: <span className="break-all font-mono">{article.id}</span>
+            </p>
+          )}
+        </div>
 
         {loading && (
           <p className="py-12 text-center text-slate-500 dark:text-slate-400" aria-live="polite">
@@ -91,6 +100,9 @@ export default function ArticlePage() {
                 <span className="rounded-full border border-amber-300 bg-red-50 px-3 py-1 text-xs font-medium text-red-900 dark:border-amber-700 dark:bg-red-950 dark:text-amber-200">
                   {getSourceLabel(article.source)}
                 </span>
+                <span className="text-sm text-slate-500 dark:text-slate-400">
+                  Published: {formatDate(article.published_at || "")}
+                </span>
                 <a
                   href={article.url}
                   target="_blank"
@@ -106,9 +118,6 @@ export default function ArticlePage() {
               <div className="mt-7 whitespace-pre-wrap break-words border-t border-slate-100 pt-6 text-base leading-8 text-slate-700 dark:border-slate-800 dark:text-slate-300">
                 {article.story_text}
               </div>
-              <p className="mt-8 border-t border-slate-100 pt-4 text-xs text-slate-400 dark:border-slate-800 dark:text-slate-500">
-                Article ID: <span className="break-all font-mono">{article.id}</span>
-              </p>
             </div>
           </>
         )}

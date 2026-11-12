@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { supabase } from "@/lib/supabase";
+import { supabaseAdmin } from "@/lib/supabase-admin";
 
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
@@ -14,16 +14,16 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  if (!supabase) {
+  if (!supabaseAdmin) {
     return NextResponse.json(
-      { error: "Supabase not configured. Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY." },
+      { error: "Supabase server access is not configured. Set SUPABASE_URL and SUPABASE_SERVICE_KEY." },
       { status: 503 }
     );
   }
 
   try {
     // Try PGroonga RPC first
-    const { data, error } = await supabase.rpc("search_articles", {
+    const { data, error } = await supabaseAdmin.rpc("search_articles", {
       search_query: query,
       filter_source: source,
       result_limit: limit,
@@ -31,7 +31,7 @@ export async function GET(request: NextRequest) {
 
     if (error) {
       // Fallback: ilike search if RPC not available
-      let q = supabase
+      let q = supabaseAdmin
         .from("chnscraping_articles")
         .select("id, source, headline, story_text, url, display_date")
         .order("display_date", { ascending: false })

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { supabase } from "@/lib/supabase";
+import { supabaseAdmin } from "@/lib/supabase-admin";
 
 export const dynamic = "force-dynamic";
 
@@ -7,9 +7,9 @@ export async function GET(
   _request: NextRequest,
   { params }: { params: { id: string } }
 ) {
-  if (!supabase) {
+  if (!supabaseAdmin) {
     return NextResponse.json(
-      { error: "Supabase not configured. Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY." },
+      { error: "Supabase server access is not configured. Set SUPABASE_URL and SUPABASE_SERVICE_KEY." },
       { status: 503 }
     );
   }
@@ -19,9 +19,9 @@ export async function GET(
   }
 
   try {
-    const { data, error } = await supabase
+    const { data, error } = await supabaseAdmin
       .from("chnscraping_articles")
-      .select("id, source, headline, story_text, url")
+      .select("id, source, headline, story_text, url, published_at")
       .eq("id", params.id)
       .maybeSingle();
 

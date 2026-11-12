@@ -1,11 +1,14 @@
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
+
+import requests
 
 from .sitemap_discovery import (
     BJNEWS_ROBOTS_URL,
     BJNEWS_SITEMAP_URL,
     SitemapFetchError,
     _allowed_url,
+    fetch_document,
     main,
     parse_robots_txt,
     parse_sitemap_xml,
@@ -58,6 +61,64 @@ Sitemap: http://www.people.cn/sitemap_index.xml
     def test_robots_missing_sitemap_is_an_error(self):
         with self.assertRaisesRegex(ValueError, "did not advertise"):
             parse_robots_txt("User-agent: *\nDisallow: /private\n")
+
+    @patch("scraper.sitemap_discovery._wait_for_crawl_delay")
+    def test_fetch_retries_connection_timeout_and_honors_crawl_delay(self, wait):
+        session = MagicMock()
+        response = MagicMock(ok=True, is_redirect=False, is_permanent_redirect=False)
+        response.content = b"User-agent: *"
+        session.get.side_effect = [
+            requests.ConnectTimeout("first timeout"),
+            requests.ConnectionError("connection failed"),
+            response,
+        ]
+
+        with patch("scraper.sitemap_discovery.time.monotonic", side_effect=[2, 4, 6]):
+            content, last_request_at = fetch_document(
+                session, BJNEWS_ROBOTS_URL, 120, None, ("bjnews.com.cn",)
+            )
+
+        self.assertEqual(content, b"User-agent: *")
+        self.assertEqual(last_request_at, 6)
+        self.assertEqual(session.get.call_count, 3)
+        self.assertEqual(wait.call_args_list, [call(120, None), call(120, 2), call(120, 4)])
+
+    @patch("scraper.sitemap_discovery._wait_for_crawl_delay")
+    def test_fetch_fails_after_bounded_retries(self, wait):
+        session = MagicMock()
+        session.get.side_effect = requests.ConnectTimeout("unreachable")
+
+        with patch("scraper.sitemap_discovery.time.monotonic", side_effect=[2, 4, 6]):
+            with self.assertRaisesRegex(SitemapFetchError, "unreachable") as error:
+                fetch_document(session, BJNEWS_ROBOTS_URL, 0, None, ("bjnews.com.cn",))
+
+        self.assertEqual(error.exception.last_request_at, 6)
+        self.assertEqual(session.get.call_count, 3)
+        self.assertEqual(wait.call_args_list, [call(0, None), call(5, 2), call(10, 4)])
+
+    @patch("scraper.sitemap_discovery._wait_for_crawl_delay")
+    def test_fetch_does_not_retry_non_transient_request_errors(self, _wait):
+        session = MagicMock()
+        session.get.side_effect = requests.exceptions.InvalidURL("invalid URL")
+        with self.assertRaisesRegex(SitemapFetchError, "invalid URL"):
+            fetch_document(session, BJNEWS_ROBOTS_URL, 0, None, ("bjnews.com.cn",))
+        self.assertEqual(session.get.call_count, 1)
+
+    @patch("scraper.sitemap_discovery.read_sitemap_urls")
+    @patch("scraper.sitemap_discovery.SupabaseRest")
+    def test_main_records_failed_robots_fetch(self, supabase_factory, read_sitemaps):
+        supabase = MagicMock()
+        supabase.request.return_value = [{"id": "job-id"}]
+        supabase_factory.return_value = supabase
+        read_sitemaps.side_effect = SitemapFetchError("robots unreachable", 1.0)
+
+        with patch("scraper.sitemap_discovery.requests.Session"):
+            self.assertEqual(main(source="bjnews"), 1)
+
+        update = supabase.request.call_args_list[-1]
+        self.assertEqual(update.args[:2], ("PATCH", "chnscraping_crawl_jobs"))
+        self.assertEqual(update.kwargs["payload"]["status"], "failed")
+        self.assertEqual(update.kwargs["payload"]["error_summary"], "robots unreachable")
 
     def test_reads_explicit_bjnews_sitemap_and_robots_delay(self):
         robots = b"User-agent: *\nCrawl-delay: 5\n"

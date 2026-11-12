@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { supabase } from "@/lib/supabase";
+import { supabaseAdmin } from "@/lib/supabase-admin";
 import { parseArticleSearch, type SearchExpression } from "@/lib/article-search";
 
 const maxPageSize = 100;
@@ -14,9 +14,9 @@ function isValidDate(value: string) {
 }
 
 export async function GET(request: NextRequest) {
-  if (!supabase) {
+  if (!supabaseAdmin) {
     return NextResponse.json(
-      { error: "Supabase not configured. Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY." },
+      { error: "Supabase server access is not configured. Set SUPABASE_URL and SUPABASE_SERVICE_KEY." },
       { status: 503 }
     );
   }
@@ -29,7 +29,7 @@ export async function GET(request: NextRequest) {
       let offset = 0;
 
       while (true) {
-        const { data, error } = await supabase
+        const { data, error } = await supabaseAdmin
           .from("chnscraping_articles")
           .select("source")
           .order("source", { ascending: true })
@@ -108,7 +108,7 @@ export async function GET(request: NextRequest) {
       publishedEndExclusive = end.toISOString();
     }
 
-    const { data, error } = await supabase.rpc("chnscraping_list_articles", {
+    const { data, error } = await supabaseAdmin.rpc("chnscraping_list_articles", {
       search_expression: searchExpression,
       search_headline_only: headlineOnly,
       filter_source: source,

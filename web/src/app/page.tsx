@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { AlertControls } from "@/components/alert-controls";
+import { formatDate } from "@/lib/format-date";
 import { getSourceLabel } from "@/lib/source-label";
 
 interface Article {
@@ -20,7 +21,16 @@ interface ArticleFilters {
   publishedTo: string;
 }
 
-const pageSize = 49;
+const pageSizeOptions = [10, 25, 50, 100];
+
+function hasActiveFilters(filters: ArticleFilters) {
+  return Boolean(
+    filters.source ||
+      filters.headline.trim() ||
+      filters.publishedFrom ||
+      filters.publishedTo
+  );
+}
 
 export default function Home() {
   const [articles, setArticles] = useState<Article[]>([]);
@@ -33,8 +43,10 @@ export default function Home() {
     publishedTo: "",
   });
   const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(50);
   const [total, setTotal] = useState(0);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
+  const filtersApplied = hasActiveFilters(filters);
   const [sourceError, setSourceError] = useState<string | null>(null);
   const [articleError, setArticleError] = useState<string | null>(null);
 
@@ -62,7 +74,16 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
+    if (!filtersApplied) {
+      setArticles([]);
+      setTotal(0);
+      setLoading(false);
+      setArticleError(null);
+      return;
+    }
+
     const controller = new AbortController();
+    setLoading(true);
     const timeout = window.setTimeout(async () => {
       setLoading(true);
       setArticleError(null);
@@ -100,7 +121,7 @@ export default function Home() {
       window.clearTimeout(timeout);
       controller.abort();
     };
-  }, [filters, page]);
+  }, [filters, filtersApplied, page, pageSize]);
 
   function updateFilter(
     field: keyof ArticleFilters,
@@ -110,19 +131,15 @@ export default function Home() {
     setPage(1);
   }
 
-  function formatDate(value: string) {
-    if (!value) return "—";
-    const date = new Date(value);
-    if (Number.isNaN(date.getTime())) return value;
-    const parts = new Intl.DateTimeFormat("en-GB", {
-      day: "2-digit",
-      month: "short",
-      year: "numeric",
-      timeZone: "UTC",
-    }).formatToParts(date);
-    const part = (type: Intl.DateTimeFormatPartTypes) =>
-      parts.find((item) => item.type === type)?.value ?? "";
-    return `${part("day")}-${part("month")}-${part("year")}`;
+  function clearFilters() {
+    setFilters({
+      source: "",
+      headline: "",
+      headlineOnly: false,
+      publishedFrom: "",
+      publishedTo: "",
+    });
+    setPage(1);
   }
 
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
@@ -224,6 +241,14 @@ export default function Home() {
                     className="min-w-0 rounded-lg border border-slate-300 bg-white px-1.5 py-1.5 text-xs text-slate-900 focus:border-red-700 focus:outline-none focus:ring-2 focus:ring-red-700/20 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
                   />
                 </label>
+                <button
+                  type="button"
+                  onClick={clearFilters}
+                  disabled={!filtersApplied && !filters.headlineOnly}
+                  className="ml-auto shrink-0 rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800"
+                >
+                  Clear
+                </button>
               </fieldset>
             </div>
           </div>
@@ -233,7 +258,11 @@ export default function Home() {
           className="mb-1 text-xs text-slate-500 dark:text-slate-400"
           aria-live="polite"
         >
-          {loading ? "Loading articles…" : `${total.toLocaleString()} articles`}
+          {!filtersApplied
+            ? "Apply a filter to see articles"
+            : loading
+              ? "Loading articles…"
+              : `${total.toLocaleString()} articles`}
         </p>
 
         <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
@@ -277,9 +306,13 @@ export default function Home() {
                 <tr>
                   <td colSpan={4} className="px-3 py-8 text-center">
                     <p className="text-sm font-medium text-slate-700 dark:text-slate-300">
-                      {articleError ? "Articles could not be loaded." : "No articles match these filters."}
+                      {articleError
+                        ? "Articles could not be loaded."
+                        : !filtersApplied
+                          ? "Enter a search term, choose a source, or set a date range."
+                          : "No articles match these filters."}
                     </p>
-                    {!articleError && (
+                    {!articleError && filtersApplied && (
                       <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
                         Try adjusting your search or filters.
                       </p>
@@ -299,6 +332,21 @@ export default function Home() {
           <span className="text-xs text-slate-500 dark:text-slate-400">
             Page <span className="font-medium text-slate-700 dark:text-slate-300">{page}</span> of {totalPages}
           </span>
+          <label className="flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400">
+            Per page
+            <select
+              value={pageSize}
+              onChange={(event) => {
+                setPageSize(Number(event.target.value));
+                setPage(1);
+              }}
+              className="rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs text-slate-900 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
+            >
+              {pageSizeOptions.map((size) => (
+                <option key={size} value={size}>{size}</option>
+              ))}
+            </select>
+          </label>
           <div className="flex gap-2">
           <button
             type="button"
