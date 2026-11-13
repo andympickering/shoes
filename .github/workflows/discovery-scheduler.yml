@@ -1,0 +1,41 @@
+name: Discovery Scheduler
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  schedule:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - source: people
+            job_type: weekly
+            workflow: people-sitemap.yml
+          - source: bjnews
+            job_type: daily
+            workflow: bjnews-sitemap.yml
+    concurrency:
+      group: discovery-scheduler-${{ matrix.source }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/github-script@v7
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          SOURCE: ${{ matrix.source }}
+          JOB_TYPE: ${{ matrix.job_type }}
+          WORKFLOW: ${{ matrix.workflow }}
+        with:
+          script: |
+            const schedule = require('./.github/scripts/schedule-discovery.js');
+            await schedule({ github, context, core, env: process.env, fetch });

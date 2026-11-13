@@ -177,6 +177,12 @@ edits can be retained as versions.
 - Revisit a seven-day recent window and make failures visible in the job report.
 - Keep the scheduled and manual GitHub Actions paths, with secrets supplied
   only through repository secrets.
+- Check each sitemap discovery every 15 minutes and dispatch it when at least
+  24 hours have elapsed since that publisher's last sitemap discovery start,
+  regardless of its outcome. Manual discovery remains available; GitHub Actions
+  scheduling delays can postpone the next run. RSS and extraction jobs do not
+  reset the sitemap interval. Scheduled dispatches recheck the interval on
+  start, and a skipped discovery does not trigger extraction or alert delivery.
 
 **Exit criteria:** repeat runs are idempotent; a missed or failed run can recover
 from persisted state; a source failure is visible; daily candidates are not

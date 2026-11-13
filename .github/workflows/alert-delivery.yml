@@ -31,6 +31,24 @@ jobs:
           script: |
             const runDate = (process.env.TRIGGER_CREATED_AT || new Date().toISOString()).slice(0, 10);
             const branch = process.env.TRIGGER_BRANCH;
+            async function skippedExtraction(run) {
+              if (run.conclusion !== "success") return false;
+              const { data } = await github.rest.actions.listJobsForWorkflowRun({
+                ...context.repo, run_id: run.id, per_page: 100,
+              });
+              const scrape = data.jobs.find((job) => job.name === "scrape");
+              if (!scrape) throw new Error(`Missing scrape job in extraction run ${run.id}`);
+              const gate = scrape.steps.find((step) => step.name === "Check discovery actually ran");
+              if (!gate) return false; // Runs created before the discovery gate existed.
+              const extraction = scrape.steps.find((step) => step.name.startsWith("Scrape up to 1,000 pending"));
+              if (!extraction) throw new Error(`Missing extraction step in run ${run.id}`);
+              return extraction.conclusion === "skipped";
+            }
+            if (context.eventName === "workflow_run" && await skippedExtraction(context.payload.workflow_run)) {
+              core.notice("Skipping alert delivery: discovery did not run.");
+              core.setOutput("ready", "false");
+              return;
+            }
             const workflows = [
               "people-scrape-pending.yml",
               "bjnews-scrape-pending.yml",
@@ -44,9 +62,14 @@ jobs:
                 branch,
                 per_page: 100,
               });
-              const run = data.workflow_runs.find((candidate) =>
-                candidate.created_at.startsWith(runDate)
-              );
+              let run;
+              for (const candidate of data.workflow_runs) {
+                if (!candidate.created_at.startsWith(runDate)) continue;
+                if (!await skippedExtraction(candidate)) {
+                  run = candidate;
+                  break;
+                }
+              }
               if (!run || run.conclusion !== "success") {
                 core.notice(
                   `Skipping alert delivery: ${workflow_id} has no successful run for ${runDate}.`
