@@ -11,6 +11,16 @@ interface RouteContext {
   params: { id: string };
 }
 
+async function getConfirmationWarning(subscriptionId: string, userId: string) {
+  try {
+    const failed = await sendPendingConfirmations(subscriptionId, userId);
+    return failed.length ? "Some confirmation emails could not be sent. Retry from Manage alerts." : null;
+  } catch (confirmationError) {
+    console.error("Could not send alert confirmations:", confirmationError);
+    return "Confirmation emails could not be sent. Retry from Manage alerts.";
+  }
+}
+
 export async function PATCH(request: NextRequest, { params }: RouteContext) {
   if (!supabaseAdmin) {
     return NextResponse.json({ error: "Alert subscriptions are not configured." }, { status: 503 });
@@ -46,14 +56,7 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
       return NextResponse.json({ error: "Could not update this alert." }, { status: 500 });
     }
     if (!data) return NextResponse.json({ error: "Alert not found." }, { status: 404 });
-    let confirmationWarning: string | null = null;
-    try {
-      const failed = await sendPendingConfirmations(params.id, userId);
-      if (failed.length) confirmationWarning = "Some confirmation emails could not be sent. Retry from Manage alerts.";
-    } catch (confirmationError) {
-      console.error("Could not send alert confirmations:", confirmationError);
-      confirmationWarning = "Confirmation emails could not be sent. Retry from Manage alerts.";
-    }
+    const confirmationWarning = await getConfirmationWarning(params.id, userId);
     return NextResponse.json({ updated: true, confirmationWarning });
   }
 
@@ -88,7 +91,8 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
     return NextResponse.json({ error: "Could not save alert changes." }, { status: 500 });
   }
   if (!data) return NextResponse.json({ error: "Alert not found." }, { status: 404 });
-  return NextResponse.json({ updated: true });
+  const confirmationWarning = await getConfirmationWarning(params.id, userId);
+  return NextResponse.json({ updated: true, confirmationWarning });
 }
 
 export async function DELETE(request: NextRequest, { params }: RouteContext) {

@@ -119,3 +119,48 @@ test("confirmation invitations are individual and failures are surfaced", async 
     }
   }
 });
+
+test("editing an alert sends pending confirmations and reports delivery failures", async () => {
+  const alertId = "00000000-0000-0000-0000-000000000001";
+  const calls = [];
+  let failure = false;
+  const query = {
+    update() { return this; },
+    eq() { return this; },
+    select() { return this; },
+    async maybeSingle() { return { data: { id: alertId }, error: null }; },
+  };
+  const route = load("app/api/alerts/[id]/route.ts", {
+    "next/server": { NextResponse: MockResponse },
+    "@/lib/alert-auth": { getAlertUserId: async () => "owner" },
+    "@/lib/alert-confirmation": {
+      async sendPendingConfirmations(id, userId) {
+        calls.push([id, userId]);
+        return failure ? ["pending@example.com"] : [];
+      },
+    },
+    "@/lib/alert-schedule": {
+      getFirstAlertDelivery: () => ({ nextDeliveryAt: new Date("2026-01-01T00:00:00Z"), scheduleDay: 1 }),
+    },
+    "@/lib/alert-validation": {
+      validateAlertSettings: () => ({
+        settings: {
+          searchTerms: "china", timeSpan: "today", frequency: "daily",
+          deliveryTimeUtc: "09:00", maxArticles: 25, emails: ["pending@example.com"],
+        },
+      }),
+    },
+    "@/lib/supabase-admin": { supabaseAdmin: { from: () => query } },
+  });
+  const request = { json: async () => ({ emails: "pending@example.com" }) };
+  const context = { params: { id: alertId } };
+  const success = await route.PATCH(request, context);
+  assert.equal(success.status, 200);
+  assert.equal(success.body.confirmationWarning, null);
+  assert.deepEqual(calls, [[alertId, "owner"]]);
+
+  failure = true;
+  const result = await route.PATCH(request, context);
+  assert.equal(result.status, 200);
+  assert.match(result.body.confirmationWarning, /could not be sent/i);
+});

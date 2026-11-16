@@ -51,6 +51,21 @@ In Supabase Authentication settings:
    login page to request a new link. Recovery links use the Site URL, which
    should be an allowed redirect URL.
 
+## Alert confirmation emails
+
+The web server needs `RESEND_API_KEY`, `ALERTS_FROM_EMAIL`, and
+`ALERTS_SITE_URL` (the deployed HTTPS site URL). To send confirmations to
+other people, verify a domain in [Resend](https://resend.com/domains) and set
+`ALERTS_FROM_EMAIL` to an address at that domain. Resend's `resend.dev`
+sender is restricted to the email address associated with the Resend account.
+Set these variables in the deployment environment and redeploy after changing
+them. Keep the API key server-only.
+
+After updating the sender, use **Manage alerts > Resend confirmation** for
+pending recipients. Confirmation requests are limited to five per recipient
+and 50 per alert owner per UTC hour; if the limit has been reached, retry in
+the next hour.
+
 ## Getting Started
 
 First, run the development server:
