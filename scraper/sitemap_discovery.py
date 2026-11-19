@@ -3,7 +3,8 @@ import sys
 import time
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
-from urllib.parse import urljoin, urlsplit
+from typing import Callable
+from urllib.parse import urljoin, urlsplit, urlunsplit
 
 import requests
 from dotenv import load_dotenv
@@ -13,10 +14,12 @@ from .rss_discovery import (
     ALLOWED_ARTICLE_DOMAINS,
     BJNEWS_ARTICLE_DOMAINS,
     BATCH_SIZE,
+    GmwRobotsPolicy,
     SOURCE,
     TABLE,
     SupabaseRest,
     normalize_url,
+    read_robots_policy,
     utc_now,
 )
 
@@ -24,6 +27,7 @@ from .rss_discovery import (
 ROBOTS_URL = "https://www.people.com.cn/robots.txt"
 BJNEWS_ROBOTS_URL = "https://www.bjnews.com.cn/robots.txt"
 BJNEWS_SITEMAP_URL = "https://www.bjnews.com.cn/sitemap.xml"
+GMW_ROBOTS_URL = "https://www.gmw.cn/robots.txt"
 DEFAULT_CRAWL_DELAY_SECONDS = 120.0
 MAX_DOCUMENT_BYTES = 50 * 1024 * 1024
 MAX_SITEMAP_DOCUMENTS = 500
@@ -57,10 +61,22 @@ SITEMAP_SOURCES = {
         default_crawl_delay_seconds=5.0,
         job_type="daily",
     ),
+    "gmw": SitemapSource(
+        robots_url=GMW_ROBOTS_URL,
+        allowed_domains=("gmw.cn",),
+        default_crawl_delay_seconds=3.0,
+        job_type="daily",
+    ),
 }
 
 
 class SitemapFetchError(RuntimeError):
+    def __init__(self, message: str, last_request_at: float | None):
+        super().__init__(message)
+        self.last_request_at = last_request_at
+
+
+class SitemapRestrictedError(ValueError):
     def __init__(self, message: str, last_request_at: float | None):
         super().__init__(message)
         self.last_request_at = last_request_at
@@ -171,6 +187,7 @@ def fetch_document(
     delay_seconds: float,
     last_request_at: float | None,
     allowed_domains: tuple[str, ...] = ALLOWED_ARTICLE_DOMAINS,
+    before_request: Callable[[str, float | None], tuple[float, float | None]] | None = None,
 ) -> tuple[bytes, float]:
     """Fetch one XML/text document without bypassing the site's crawl delay."""
     current_url = url
@@ -179,6 +196,9 @@ def fetch_document(
     while True:
         if not _allowed_url(current_url, allowed_domains):
             raise ValueError(f"Refusing URL outside allowed publisher domains: {current_url}")
+
+        if before_request:
+            delay_seconds, last_request_at = before_request(current_url, last_request_at)
 
         for attempt in range(MAX_REQUEST_ATTEMPTS):
             retry_delay = RETRY_DELAY_SECONDS * (2 ** (attempt - 1)) if attempt else 0
@@ -263,6 +283,32 @@ def read_sitemap_urls(
     )
     sitemap_urls = list(config.sitemap_urls or advertised_sitemaps)
 
+    before_request = None
+    if source == "gmw":
+        policies = {
+            "https://www.gmw.cn": (
+                GmwRobotsPolicy(robots_content.decode("utf-8", errors="replace")),
+                crawl_delay,
+            )
+        }
+
+        def check_gmw_robots(url: str, last_at: float | None) -> tuple[float, float | None]:
+            parts = urlsplit(url)
+            origin = f"{parts.scheme}://{parts.netloc}"
+            if origin not in policies:
+                _wait_for_crawl_delay(config.default_crawl_delay_seconds, last_at)
+                try:
+                    policies[origin] = read_robots_policy(session, url, USER_AGENT)
+                except requests.RequestException as error:
+                    raise SitemapFetchError(f"Could not fetch robots.txt for {origin}: {error}", time.monotonic()) from error
+                last_at = time.monotonic()
+            policy, delay = policies[origin]
+            if not policy.can_fetch(USER_AGENT, url):
+                raise SitemapRestrictedError(f"robots.txt disallows sitemap: {url}", last_at)
+            return max(config.default_crawl_delay_seconds, delay), last_at
+
+        before_request = check_gmw_robots
+
     article_urls: dict[str, tuple[str, str]] = {}
     errors: list[str] = []
     visited_sitemaps: set[str] = set()
@@ -281,14 +327,16 @@ def read_sitemap_urls(
             break
 
         try:
-            content, last_request_at = fetch_document(
-                session,
-                sitemap_url,
-                crawl_delay,
-                last_request_at,
-                config.allowed_domains,
-            )
+            args = (session, sitemap_url, crawl_delay, last_request_at, config.allowed_domains)
+            if before_request:
+                content, last_request_at = fetch_document(*args, before_request=before_request)
+            else:
+                content, last_request_at = fetch_document(*args)
             document_type, urls = parse_sitemap_xml(content)
+        except SitemapRestrictedError as error:
+            last_request_at = error.last_request_at
+            print(str(error), file=sys.stderr)
+            continue
         except (SitemapFetchError, ValueError, ET.ParseError) as error:
             if isinstance(error, SitemapFetchError):
                 last_request_at = error.last_request_at
@@ -300,6 +348,10 @@ def read_sitemap_urls(
         if document_type == "index":
             for url in urls:
                 if _allowed_url(url, config.allowed_domains):
+                    if source == "gmw":
+                        parts = urlsplit(url)
+                        if parts.scheme == "http" and parts.port is None:
+                            url = urlunsplit(("https", parts.netloc, parts.path, parts.query, parts.fragment))
                     pending_sitemaps.append(url)
                 else:
                     message = f"Refusing sitemap URL outside allowed publisher domains: {url}"
@@ -308,6 +360,8 @@ def read_sitemap_urls(
             continue
 
         for article_url in urls:
+            if not _allowed_url(article_url, config.allowed_domains):
+                continue
             normalized_url = normalize_url(article_url, config.allowed_domains)
             if normalized_url:
                 article_urls.setdefault(normalized_url, (article_url, sitemap_url))

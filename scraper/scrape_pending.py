@@ -1,4 +1,4 @@
-"""Extract articles from pending publisher sitemap discoveries."""
+"""Extract articles from pending publisher discoveries."""
 import argparse
 import sys
 
@@ -6,7 +6,10 @@ from dotenv import load_dotenv
 from pathlib import Path
 
 from .adapters.bjnews import BjnewsAdapter
+from .adapters.cankaoxiaoxi import CankaoxiaoxiAdapter
+from .adapters.gmw import GmwAdapter
 from .adapters.people import PeopleAdapter
+from .adapters.xinhua import XinhuaAdapter
 from .rss_discovery import (
     ARTICLE_USER_AGENT,
     BJNEWS_ARTICLE_USER_AGENT,
@@ -23,6 +26,13 @@ JOBS_TABLE = "chnscraping_crawl_jobs"
 SOURCE_ADAPTERS = {
     "people": (PeopleAdapter, ARTICLE_USER_AGENT, alternate_people_domain_url),
     "bjnews": (BjnewsAdapter, BJNEWS_ARTICLE_USER_AGENT, None),
+    "gmw": (GmwAdapter, GmwAdapter.USER_AGENT, None),
+    "xinhua": (XinhuaAdapter, XinhuaAdapter.USER_AGENT, None),
+    "cankaoxiaoxi": (
+        CankaoxiaoxiAdapter,
+        CankaoxiaoxiAdapter.USER_AGENT,
+        None,
+    ),
 }
 
 load_dotenv(Path(__file__).resolve().parents[1] / ".env", override=True)
@@ -38,9 +48,12 @@ def main(source: str = "people") -> int:
             raise ValueError(f"Unsupported extraction source: {source}") from error
 
         supabase = SupabaseRest()
-        records = supabase.find_pending_records(MAX_RECORDS, source)
+        if source in ("xinhua", "cankaoxiaoxi"):
+            records = supabase.find_pending_records(MAX_RECORDS, source, "search")
+        else:
+            records = supabase.find_pending_records(MAX_RECORDS, source)
         if not records:
-            print(f"No eligible {source} sitemap discoveries to process.")
+            print(f"No eligible {source} discoveries to process.")
             return 0
 
         started_at = utc_now()
@@ -90,7 +103,14 @@ def main(source: str = "people") -> int:
                 f"{stats.failed} failed, {stats.restricted} restricted."
             )
 
-        adapter = adapter_type(delay_seconds=0, user_agent=user_agent)
+        if source == "xinhua":
+            adapter = XinhuaAdapter(delay_seconds=0, user_agent=user_agent, follow_redirects=False)
+        elif source == "cankaoxiaoxi":
+            adapter = CankaoxiaoxiAdapter(
+                delay_seconds=0, user_agent=user_agent, follow_redirects=False
+            )
+        else:
+            adapter = adapter_type(delay_seconds=0, user_agent=user_agent)
         try:
             stats = process_discoveries(
                 supabase,
@@ -150,6 +170,6 @@ def main(source: str = "people") -> int:
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Extract pending sitemap discoveries")
+    parser = argparse.ArgumentParser(description="Extract pending discoveries")
     parser.add_argument("--source", choices=sorted(SOURCE_ADAPTERS), default="people")
     sys.exit(main(parser.parse_args().source))

@@ -1,0 +1,38 @@
+name: Cankaoxiaoxi Search Discovery and Extraction
+
+on:
+  schedule:
+    - cron: "13 17 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: cankaoxiaoxi-search-discovery
+  cancel-in-progress: false
+
+jobs:
+  discover-and-extract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install scraper dependencies
+        run: pip install -r scraper/requirements.txt
+
+      - name: Discover Cankaoxiaoxi search results
+        id: discover
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: python -m scraper.cankaoxiaoxi_search_discovery
+
+      - name: Extract pending Cankaoxiaoxi discoveries
+        if: always() && steps.discover.outcome != 'skipped' && steps.discover.outcome != ''
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: python -m scraper.scrape_pending --source cankaoxiaoxi

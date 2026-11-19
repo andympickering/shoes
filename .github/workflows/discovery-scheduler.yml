@@ -23,6 +23,9 @@ jobs:
           - source: bjnews
             job_type: daily
             workflow: bjnews-sitemap.yml
+          - source: gmw
+            job_type: daily
+            workflow: gmw-sitemap.yml
     concurrency:
       group: discovery-scheduler-${{ matrix.source }}
       cancel-in-progress: false

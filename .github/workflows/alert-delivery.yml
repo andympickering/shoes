@@ -6,6 +6,7 @@ on:
     workflows:
       - "People's Daily Article Extraction"
       - "Beijing News Article Extraction"
+      - "Guangming Online Article Extraction"
     types: [completed]
 
 concurrency:
@@ -21,7 +22,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 360
     steps:
-      - name: Wait until both publisher extractions succeeded
+      - name: Wait until publisher extractions succeeded
         id: crawl-gate
         uses: actions/github-script@v7
         env:
@@ -52,6 +53,7 @@ jobs:
             const workflows = [
               "people-scrape-pending.yml",
               "bjnews-scrape-pending.yml",
+              "gmw-scrape-pending.yml",
             ];
 
             for (const workflow_id of workflows) {
@@ -79,7 +81,7 @@ jobs:
               }
             }
 
-            core.info(`Both publisher extractions succeeded for ${runDate}.`);
+            core.info(`All publisher extractions succeeded for ${runDate}.`);
             core.setOutput("ready", "true");
 
       - name: Deliver all due alerts

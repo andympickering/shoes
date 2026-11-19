@@ -35,6 +35,13 @@ class ScrapePendingTests(unittest.TestCase):
             "eq.bjnews",
         )
 
+    def test_selects_xinhua_search_records(self):
+        supabase = MagicMock(spec=SupabaseRest)
+        SupabaseRest.find_pending_records(supabase, MAX_RECORDS, "xinhua", "search")
+        self.assertEqual(
+            supabase.request.call_args.kwargs["params"]["discovery_method"], "eq.search"
+        )
+
     @patch("scraper.scrape_pending.SupabaseRest")
     def test_completes_batch_with_record_failures_and_updates_progress(
         self, supabase_factory
@@ -142,6 +149,61 @@ class ScrapePendingTests(unittest.TestCase):
             adapter.session.headers["User-Agent"],
             "CHNscraping article extraction; contact repository owner",
         )
+
+    @patch("scraper.scrape_pending.process_discoveries")
+    @patch("scraper.scrape_pending.SupabaseRest")
+    def test_runs_xinhua_search_extraction(self, supabase_factory, process_records):
+        supabase = MagicMock()
+        supabase.find_pending_records.return_value = [
+            {"id": "record", "discovered_url": "https://www.news.cn/a.html"}
+        ]
+        supabase.request.return_value = [{"id": "job"}]
+        supabase_factory.return_value = supabase
+        process_records.return_value = ProcessStats(extracted=1)
+        self.assertEqual(main("xinhua"), 0)
+        supabase.find_pending_records.assert_called_once_with(MAX_RECORDS, "xinhua", "search")
+        self.assertEqual(process_records.call_args.args[2].source_id, "xinhua")
+        self.assertFalse(process_records.call_args.args[2].follow_redirects)
+        self.assertIsNone(process_records.call_args.kwargs["alternate_url_for"])
+
+    @patch("scraper.scrape_pending.process_discoveries")
+    @patch("scraper.scrape_pending.SupabaseRest")
+    def test_runs_cankaoxiaoxi_search_extraction(
+        self, supabase_factory, process_records
+    ):
+        supabase = MagicMock()
+        supabase.find_pending_records.return_value = [
+            {"id": "record", "discovered_url": "https://ckxxapp.ckxx.net/pages/2026/11/19/article.html"}
+        ]
+        supabase.request.return_value = [{"id": "job"}]
+        supabase_factory.return_value = supabase
+        process_records.return_value = ProcessStats(extracted=1)
+
+        self.assertEqual(main("cankaoxiaoxi"), 0)
+
+        supabase.find_pending_records.assert_called_once_with(
+            MAX_RECORDS, "cankaoxiaoxi", "search"
+        )
+        self.assertEqual(process_records.call_args.args[2].source_id, "cankaoxiaoxi")
+        self.assertFalse(process_records.call_args.args[2].follow_redirects)
+        self.assertEqual(process_records.call_args.kwargs["source"], "cankaoxiaoxi")
+        self.assertIsNone(process_records.call_args.kwargs["alternate_url_for"])
+
+    @patch("scraper.scrape_pending.process_discoveries")
+    @patch("scraper.scrape_pending.SupabaseRest")
+    def test_runs_gmw_sitemap_extraction(self, supabase_factory, process_records):
+        supabase = MagicMock()
+        supabase.find_pending_records.return_value = [
+            {"id": "record", "discovered_url": "https://news.gmw.cn/2026-11/19/content_1.htm"}
+        ]
+        supabase.request.return_value = [{"id": "job"}]
+        supabase_factory.return_value = supabase
+        process_records.return_value = ProcessStats(extracted=1)
+        self.assertEqual(main("gmw"), 0)
+        supabase.find_pending_records.assert_called_once_with(MAX_RECORDS, "gmw")
+        self.assertEqual(process_records.call_args.args[2].source_id, "gmw")
+        self.assertEqual(process_records.call_args.kwargs["source"], "gmw")
+        self.assertIsNone(process_records.call_args.kwargs["alternate_url_for"])
 
 
 if __name__ == "__main__":

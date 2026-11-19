@@ -10,11 +10,15 @@ from urllib.robotparser import RobotFileParser
 
 import requests
 from dotenv import load_dotenv
+from protego import Protego
 from pathlib import Path
 
 from .adapters.base import Article
 from .adapters.bjnews import BjnewsAdapter
+from .adapters.cankaoxiaoxi import CankaoxiaoxiAdapter
+from .adapters.gmw import GmwAdapter
 from .adapters.people import PeopleAdapter
+from .adapters.xinhua import XinhuaAdapter
 
 
 FEED_URL = "https://plink.anyfeeder.com/people-daily"
@@ -186,7 +190,7 @@ class SupabaseRest:
         return pending
 
     def find_pending_records(
-        self, limit: int, source: str = SOURCE
+        self, limit: int, source: str = SOURCE, discovery_method: str = "sitemap"
     ) -> list[dict[str, Any]]:
         return self.request(
             "GET",
@@ -194,7 +198,7 @@ class SupabaseRest:
             params={
                 "select": "id,discovered_url,normalized_url,attempts,discovery_method",
                 "source": f"eq.{source}",
-                "discovery_method": "eq.sitemap",
+                "discovery_method": f"eq.{discovery_method}",
                 "processing_status": "in.(pending,processing,failed)",
                 "attempts": "lt.3",
                 "order": "discovered_at.asc",
@@ -212,18 +216,35 @@ class ProcessStats:
     errors: list[str] = field(default_factory=list)
 
 
+class GmwRobotsPolicy:
+    """Adapt Protego's wildcard-aware rules to the existing robots interface."""
+
+    def __init__(self, content: str):
+        self.parser = Protego.parse(content)
+
+    def can_fetch(self, user_agent: str, url: str) -> bool:
+        return self.parser.can_fetch(url, user_agent)
+
+    def crawl_delay(self, user_agent: str) -> float | None:
+        return self.parser.crawl_delay(user_agent)
+
+
 def read_robots_policy(
     session: requests.Session,
     article_url: str,
     user_agent: str = ARTICLE_USER_AGENT,
-) -> tuple[RobotFileParser, float]:
+) -> tuple[RobotFileParser | GmwRobotsPolicy, float]:
     parts = urlsplit(article_url)
     robots_url = urlunsplit((parts.scheme, parts.netloc, "/robots.txt", "", ""))
+    is_gmw = bool(parts.hostname and (parts.hostname == "gmw.cn" or parts.hostname.endswith(".gmw.cn")))
     response = session.get(
         robots_url,
         headers={"User-Agent": user_agent},
         timeout=(15, 60),
+        **({"allow_redirects": False} if is_gmw else {}),
     )
+    if is_gmw and 300 <= response.status_code < 400:
+        raise requests.HTTPError(f"robots.txt redirected: {robots_url}")
     if response.status_code == 404:
         lines: list[str] = []
     else:
@@ -232,8 +253,11 @@ def read_robots_policy(
             raise RuntimeError(f"robots.txt exceeded the 1 MiB safety limit: {robots_url}")
         lines = response.text.splitlines()
 
-    parser = RobotFileParser(robots_url)
-    parser.parse(lines)
+    if is_gmw:
+        parser = GmwRobotsPolicy("\n".join(lines))
+    else:
+        parser = RobotFileParser(robots_url)
+        parser.parse(lines)
     delay = parser.crawl_delay(user_agent)
     return parser, float(delay if delay is not None else DEFAULT_CRAWL_DELAY_SECONDS)
 
@@ -295,7 +319,13 @@ def save_article(
 def process_discoveries(
     supabase: SupabaseRest,
     records: list[dict[str, Any]],
-    adapter: PeopleAdapter | BjnewsAdapter,
+    adapter: (
+        PeopleAdapter
+        | BjnewsAdapter
+        | GmwAdapter
+        | XinhuaAdapter
+        | CankaoxiaoxiAdapter
+    ),
     robots_session: requests.Session | None = None,
     on_record_complete: Callable[[dict[str, Any], ProcessStats], None] | None = None,
     source: str = SOURCE,
@@ -303,7 +333,7 @@ def process_discoveries(
     alternate_url_for: Callable[[str], str | None] | None = alternate_people_domain_url,
 ) -> ProcessStats:
     stats = ProcessStats()
-    policies: dict[str, tuple[RobotFileParser, float]] = {}
+    policies: dict[str, tuple[RobotFileParser | GmwRobotsPolicy, float]] = {}
     last_request_by_origin: dict[str, float] = {}
     owns_session = robots_session is None
     session = robots_session or requests.Session()

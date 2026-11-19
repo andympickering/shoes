@@ -1,7 +1,7 @@
 """Xinhua (新华网) news site adapter."""
 import re
 import time
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from urllib.parse import urljoin, urlparse
 
 import requests
@@ -14,6 +14,7 @@ class XinhuaAdapter(BaseAdapter):
     """Scraper for Xinhua News (www.news.cn / www.xinhuanet.com)."""
 
     source_id = "xinhua"
+    USER_AGENT = "CHNscraping article extraction; contact repository owner"
 
     # Section pages to scrape for article links
     LISTING_URLS = [
@@ -26,12 +27,16 @@ class XinhuaAdapter(BaseAdapter):
     # Match article URLs (end with /c.html)
     ARTICLE_URL_PATTERN = re.compile(r"/\d{8}/[a-f0-9]+/c\.html$", re.I)
 
-    def __init__(self, delay_seconds: float = 3.0):
+    def __init__(
+        self, delay_seconds: float = 3.0, user_agent: str | None = None,
+        follow_redirects: bool = True,
+    ):
         self.delay_seconds = delay_seconds
+        self.follow_redirects = follow_redirects
         self.session = requests.Session()
         self.session.headers.update(
             {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "User-Agent": user_agent or "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
                 "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
                 "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
             }
@@ -62,7 +67,9 @@ class XinhuaAdapter(BaseAdapter):
     def _parse_article(self, url: str) -> Article | None:
         """Fetch and parse a single article page."""
         try:
-            resp = self.session.get(url, timeout=15)
+            resp = self.session.get(url, timeout=15, allow_redirects=self.follow_redirects)
+            if not self.follow_redirects and 300 <= resp.status_code < 400:
+                raise requests.HTTPError(f"Article URL redirected: {url}")
             resp.raise_for_status()
             resp.encoding = resp.apparent_encoding or "utf-8"
             soup = BeautifulSoup(resp.text, "html.parser")
@@ -86,6 +93,8 @@ class XinhuaAdapter(BaseAdapter):
                     published_at = datetime.fromisoformat(
                         meta_date["content"].replace("Z", "+00:00")
                     )
+                    if published_at.tzinfo is None:
+                        published_at = published_at.replace(tzinfo=timezone(timedelta(hours=8)))
                 except ValueError:
                     pass
             if not published_at:
@@ -103,6 +112,7 @@ class XinhuaAdapter(BaseAdapter):
                             int(date_match.group(4)),
                             int(date_match.group(5)),
                             int(date_match.group(6)),
+                            tzinfo=timezone(timedelta(hours=8)),
                         )
                     except ValueError:
                         pass
@@ -110,6 +120,7 @@ class XinhuaAdapter(BaseAdapter):
             # Article body - common content containers
             story_parts = []
             content_selectors = [
+                "#detailContent p",
                 "div#p-detail p",
                 "div.detail-box p",
                 "div.article p",
@@ -123,7 +134,7 @@ class XinhuaAdapter(BaseAdapter):
                 if paras:
                     for p in paras:
                         text = p.get_text(strip=True)
-                        if text and len(text) > 20:
+                        if text and (selector == "#detailContent p" or len(text) > 20):
                             story_parts.append(text)
                     break
             if not story_parts:
