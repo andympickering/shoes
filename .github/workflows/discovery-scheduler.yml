@@ -2,7 +2,7 @@ name: Discovery Scheduler
 
 on:
   schedule:
-    - cron: "*/15 * * * *"
+    - cron: "7 16 * * *"
   workflow_dispatch:
 
 permissions:
@@ -26,6 +26,9 @@ jobs:
           - source: gmw
             job_type: daily
             workflow: gmw-sitemap.yml
+          - source: cankaoxiaoxi
+            job_type: daily
+            workflow: cankaoxiaoxi-search.yml
     concurrency:
       group: discovery-scheduler-${{ matrix.source }}
       cancel-in-progress: false
