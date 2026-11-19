@@ -25,19 +25,21 @@ class CankaoxiaoxiSearchDiscoveryTests(unittest.TestCase):
         }
 
     @patch("scraper.cankaoxiaoxi_search_discovery.time.sleep")
-    def test_paginates_filters_24_hours_and_deduplicates(self, _sleep):
+    def test_paginates_filters_48_hours_and_deduplicates(self, _sleep):
         session = MagicMock()
         recent = "https://ckxxapp.ckxx.net/pages/2026/11/19/" + "a" * 32 + ".html"
-        boundary = "https://ckxxapp.ckxx.net/pages/2026/11/18/" + "b" * 32 + ".html"
-        old = "https://ckxxapp.ckxx.net/pages/2026/11/18/" + "c" * 32 + ".html"
+        previous_day = "https://ckxxapp.ckxx.net/pages/2026/11/18/" + "b" * 32 + ".html"
+        boundary = "https://ckxxapp.ckxx.net/pages/2026/11/17/" + "c" * 32 + ".html"
+        old = "https://ckxxapp.ckxx.net/pages/2026/11/17/" + "d" * 32 + ".html"
         session.get.side_effect = [
             self.response(1, [
                 self.item(recent + "?utm_source=test", "2026-11-19 08:00:00"),
             ]),
             self.response(2, [
                 self.item(recent, "2026-11-19 08:00:00"),
-                self.item(boundary, "2026-11-18 08:00:00"),
-                self.item(old, "2026-11-18 07:59:59"),
+                self.item(previous_day, "2026-11-18 07:00:00"),
+                self.item(boundary, "2026-11-17 08:00:00"),
+                self.item(old, "2026-11-17 07:59:59"),
             ]),
         ]
         end = datetime(2026, 11, 19, 0, 0, tzinfo=timezone.utc)
@@ -46,14 +48,17 @@ class CankaoxiaoxiSearchDiscoveryTests(unittest.TestCase):
         search_term(
             session,
             "中国",
-            end - timedelta(days=1),
+            end - timedelta(days=2),
             end,
             articles,
             "pc-test",
             None,
         )
 
-        self.assertEqual(articles, {recent: recent + "?utm_source=test", boundary: boundary})
+        self.assertEqual(
+            articles,
+            {recent: recent + "?utm_source=test", previous_day: previous_day, boundary: boundary},
+        )
         self.assertEqual(session.get.call_count, 2)
         self.assertEqual(session.get.call_args.kwargs["params"]["pageNum"], 2)
         self.assertEqual(session.get.call_args.kwargs["params"]["channelId"],
@@ -157,13 +162,44 @@ class CankaoxiaoxiSearchDiscoveryTests(unittest.TestCase):
 
         self.assertEqual(search.call_count, 2)
         self.assertEqual(search.call_args_list[0].args[3] -
-                         search.call_args_list[0].args[2], timedelta(hours=24))
+                         search.call_args_list[0].args[2], timedelta(hours=48))
         insert = supabase.request.call_args_list[2]
         self.assertEqual(insert.kwargs["payload"][0]["discovery_method"], "search")
         self.assertEqual(
             supabase.request.call_args_list[-1].kwargs["payload"]["status"], "partial"
         )
         supabase.session.close.assert_called_once()
+
+    @patch("scraper.cankaoxiaoxi_search_discovery.search_term")
+    @patch("scraper.cankaoxiaoxi_search_discovery.SupabaseRest")
+    def test_existing_discoveries_are_not_added_to_queue_again(
+        self, supabase_factory, search
+    ):
+        existing_url = "https://ckxxapp.ckxx.net/pages/2026/11/18/" + "a" * 32 + ".html"
+        new_url = "https://ckxxapp.ckxx.net/pages/2026/11/19/" + "b" * 32 + ".html"
+        supabase = supabase_factory.return_value
+        supabase.find_existing.return_value = {existing_url}
+        supabase.request.side_effect = [
+            [{"id": "job"}],
+            [{"id": "alert", "search_terms": "term"}],
+            [{"id": "record"}],
+            [],
+        ]
+
+        def find(_session, _term, _start, _end, articles, _app_id, _last):
+            articles.update({existing_url: existing_url, new_url: new_url})
+            return 1.0
+
+        search.side_effect = find
+        self.assertEqual(main(), 0)
+        supabase.find_existing.assert_called_once_with(
+            [existing_url, new_url], "cankaoxiaoxi"
+        )
+        records = supabase.request.call_args_list[2].kwargs["payload"]
+        self.assertEqual([record["normalized_url"] for record in records], [new_url])
+        self.assertEqual(
+            supabase.request.call_args_list[-1].kwargs["payload"]["duplicate_count"], 1
+        )
 
 
 if __name__ == "__main__":

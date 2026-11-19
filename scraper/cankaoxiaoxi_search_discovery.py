@@ -134,7 +134,7 @@ def search_term(
         if page >= page_count:
             if page_count >= MAX_PAGES and results:
                 raise RuntimeError(
-                    "Cankaoxiaoxi search reached its result limit before the 24-hour boundary"
+                    "Cankaoxiaoxi search reached its result limit before the 48-hour boundary"
                 )
             return last_request_at
         page += 1
@@ -182,7 +182,7 @@ def main() -> int:
                     last_request_at = search_term(
                         session,
                         term,
-                        started - timedelta(days=1),
+                        started - timedelta(days=2),
                         started,
                         articles,
                         app_id,

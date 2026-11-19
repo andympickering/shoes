@@ -20,7 +20,7 @@ pre-filled. The archive link searches that calendar day, regardless of the
 alert's configured lookback period.
 
 Cankaoxiaoxi (`cankaoxiaoxi`) uses its public keyword-search API to discover
-articles matching active alert terms from the previous 24 hours, then extracts
+articles matching active alert terms from the previous 48 hours, then extracts
 the queued article pages. The daily/manual GitHub Actions workflow runs both
 stages. To run them locally:
 

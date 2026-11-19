@@ -188,7 +188,7 @@ edits can be retained as versions.
   [archive/xinhua](archive/xinhua/README.md); previously stored records remain
   untouched.
 - Cankaoxiaoxi search discovery uses the publisher's public keyword API for
-  distinct active alert terms over the rolling previous 24 hours. It stores
+  distinct active alert terms over the rolling previous 48 hours. It stores
   discoveries before extracting queued article pages; requests are paced at
   three seconds and article extraction checks robots rules and rejects
   redirects. The current public search channel and site identifiers are
