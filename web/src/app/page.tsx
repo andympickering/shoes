@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { AlertControls } from "@/components/alert-controls";
+import { archiveFiltersFromSearchParams, type ArticleFilters } from "@/lib/archive-filters";
 import { formatDate } from "@/lib/format-date";
 import { getSourceLabel } from "@/lib/source-label";
 
@@ -11,14 +12,6 @@ interface Article {
   headline: string;
   display_date: string;
   relevance_score: number;
-}
-
-interface ArticleFilters {
-  source: string;
-  headline: string;
-  headlineOnly: boolean;
-  publishedFrom: string;
-  publishedTo: string;
 }
 
 const pageSizeOptions = [10, 25, 50, 100];
@@ -49,6 +42,13 @@ export default function Home() {
   const filtersApplied = hasActiveFilters(filters);
   const [sourceError, setSourceError] = useState<string | null>(null);
   const [articleError, setArticleError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (["headline", "publishedFrom", "publishedTo"].some((key) => params.has(key))) {
+      setFilters(archiveFiltersFromSearchParams(params));
+    }
+  }, []);
 
   useEffect(() => {
     const controller = new AbortController();

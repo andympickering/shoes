@@ -183,22 +183,11 @@ edits can be retained as versions.
   scheduling delays can postpone the next run. RSS and extraction jobs do not
   reset the sitemap interval. Scheduled dispatches recheck the interval on
   start, and a skipped discovery does not trigger extraction or alert delivery.
-- Xinhua search discovery is scheduled for 17:03 UTC daily (GitHub Actions
-  scheduling can be delayed). It searches the
-  distinct terms from active alerts separately, unions URLs from the rolling
-  previous 24 hours from the actual run start (Xinhua publication times are
-  interpreted as UTC+8), and
-  stores new search discoveries before extracting pending articles. The
-  archive's existing Boolean search determines final alert matches. Xinhua
-  search can omit results or cap them at 10,000; failures or a cap reached
-  before the time boundary are reported as partial. Extraction processes up
-  to 1,000 pending records per run. Xinhua failures do not block other sources'
-  alert delivery, so Xinhua results may arrive after an alert has been sent.
-  At the owner's request, search discovery is an explicit exception to
-  `so.news.cn/robots.txt`'s disallow rule; article extraction still checks each
-  discovered article URL's robots policy and rejects redirects rather than
-  following them without a policy check. Search terms are sent to Xinhua.
-  Cankaoxiaoxi search discovery uses the publisher's public keyword API for
+- Xinhua discovery and extraction are disabled because automated search
+  requests were blocked. The previous implementation is retained in
+  [archive/xinhua](archive/xinhua/README.md); previously stored records remain
+  untouched.
+- Cankaoxiaoxi search discovery uses the publisher's public keyword API for
   distinct active alert terms over the rolling previous 24 hours. It stores
   discoveries before extracting queued article pages; requests are paced at
   three seconds and article extraction checks robots rules and rejects

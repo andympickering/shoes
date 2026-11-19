@@ -18,7 +18,6 @@ from .adapters.bjnews import BjnewsAdapter
 from .adapters.cankaoxiaoxi import CankaoxiaoxiAdapter
 from .adapters.gmw import GmwAdapter
 from .adapters.people import PeopleAdapter
-from .adapters.xinhua import XinhuaAdapter
 
 
 FEED_URL = "https://plink.anyfeeder.com/people-daily"
@@ -323,7 +322,6 @@ def process_discoveries(
         PeopleAdapter
         | BjnewsAdapter
         | GmwAdapter
-        | XinhuaAdapter
         | CankaoxiaoxiAdapter
     ),
     robots_session: requests.Session | None = None,

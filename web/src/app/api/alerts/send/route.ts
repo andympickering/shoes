@@ -1,11 +1,12 @@
 import { timingSafeEqual } from "crypto";
 import { NextRequest, NextResponse } from "next/server";
-import { parseArticleSearch } from "@/lib/article-search";
+import { parseArticleSearch, type SearchExpression } from "@/lib/article-search";
 import {
   getNextAlertDelivery,
   type AlertFrequency,
 } from "@/lib/alert-schedule";
 import { supabaseAdmin } from "@/lib/supabase-admin";
+import { getSourceLabel } from "@/lib/source-label";
 
 export const dynamic = "force-dynamic";
 
@@ -63,9 +64,19 @@ function getLookbackStart(timeSpan: DueAlert["time_span"], now: Date) {
   return new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
 }
 
-function getPeriodLabel(timeSpan: DueAlert["time_span"]) {
-  if (timeSpan === "today") return "today (UTC)";
-  return timeSpan === "last_3_days" ? "the last 3 days" : "the last 7 days";
+function searchTerms(expression: SearchExpression): string[] {
+  if (expression.type === "term") return [expression.value];
+  return [...searchTerms(expression.left), ...searchTerms(expression.right)];
+}
+
+function getEmailSourceLabel(source: string) {
+  switch (source) {
+    case "bjnews": return "BeijingNews";
+    case "xinhua": return "Xinhua";
+    case "cankaoxiaoxi": return "Cankaoxiaoxi";
+    case "gmw": return "Guangming Daily";
+    default: return getSourceLabel(source);
+  }
 }
 
 function formatArticleDate(value: string) {
@@ -143,30 +154,27 @@ async function sendAlert(alert: DueAlert, now: Date, siteUrl: string) {
   });
 
   const unsubscribeUrl = `${siteUrl}/api/alerts/unsubscribe?token=${encodeURIComponent(alert.unsubscribe_token)}`;
-  const period = getPeriodLabel(alert.time_span);
+  const archiveUrl = new URL(`${siteUrl}/`);
+  const alertDate = now.toISOString().slice(0, 10);
+  archiveUrl.searchParams.set("headline", alert.search_terms);
+  archiveUrl.searchParams.set("publishedFrom", alertDate);
+  archiveUrl.searchParams.set("publishedTo", alertDate);
+  const summary = `Top ${alert.max_articles} of ${totalCount} articles from ${formatEmailDate(now)}`;
   const articleHtml = articles
     .map((article) => {
-      const archiveUrl = `${siteUrl}/articles/${encodeURIComponent(article.id)}`;
-      return `<li style="margin:0 0 16px"><a href="${escapeHtml(article.url)}" style="color:#b91c1c;font-weight:600">${escapeHtml(article.headline)}</a><br><span style="color:#475569;font-size:13px">${escapeHtml(article.source)} · ${escapeHtml(formatArticleDate(article.display_date))} &nbsp;<a href="${escapeHtml(archiveUrl)}" style="display:inline-block;padding:0 7px;border:1px solid #fbbf24;border-radius:10px;color:#92400e;background:#fffbeb;font-size:11px;line-height:17px;text-decoration:none">Archive ›</a></span></li>`;
+      const articleArchiveUrl = `${siteUrl}/articles/${encodeURIComponent(article.id)}`;
+      return `<li style="margin:0 0 16px"><a href="${escapeHtml(article.url)}" style="color:#b91c1c;font-weight:600">${escapeHtml(article.headline)}</a><br><span style="color:#475569;font-size:13px">${escapeHtml(getEmailSourceLabel(article.source))} · ${escapeHtml(formatArticleDate(article.display_date))} &nbsp;<a href="${escapeHtml(articleArchiveUrl)}" style="display:inline-block;padding:0 7px;border:1px solid #fbbf24;border-radius:10px;color:#92400e;background:#fffbeb;font-size:11px;line-height:17px;text-decoration:none">Archive ›</a></span></li>`;
     })
     .join("");
   const articleText = articles
     .map(
       (article) =>
-        `- ${article.headline} (${article.source}, ${formatArticleDate(article.display_date)})\n  ${article.url}\n  Archive: ${siteUrl}/articles/${encodeURIComponent(article.id)}`
+        `- ${article.headline} (${getEmailSourceLabel(article.source)}, ${formatArticleDate(article.display_date)})\n  ${article.url}\n  Archive: ${siteUrl}/articles/${encodeURIComponent(article.id)}`
     )
     .join("\n");
-  const moreText =
-    totalCount > articles.length
-      ? `<p>Showing ${articles.length} of ${totalCount} matching articles.</p>`
-      : "";
-  const morePlainText =
-    totalCount > articles.length
-      ? `\nShowing ${articles.length} of ${totalCount} matching articles.`
-      : "";
   const imageUrl = `${siteUrl}/mao-banner.png`;
-  const html = `<div style="font-family:Arial,'Microsoft YaHei',sans-serif;color:#171717;line-height:1.6;max-width:640px;margin:0 auto;background:#f8fafc"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#b91c1c;border-bottom:3px solid #fbbf24"><tr><td style="padding:21px 16px 21px 22px;text-align:left"><h1 style="margin:0;color:#fcd34d;font-family:'Microsoft YaHei','Noto Sans CJK SC',Arial,sans-serif;font-size:39px;line-height:1.3;font-weight:700">来自中国的笔记</h1><p style="margin:5px 0 0;color:#fde68a;font-size:14.3px;font-weight:700;letter-spacing:1px">${formatEmailDate(now)}</p></td><td width="110" align="right" valign="middle" style="padding:8px 18px 8px 0"><img src="${imageUrl}" alt="Portrait of Mao Zedong" width="90" height="108" style="display:block;width:90px;height:108px;object-fit:cover"></td></tr></table><div style="padding:20px 22px;background:#fff"><p>${totalCount} article${totalCount === 1 ? "" : "s"} matched <strong>${escapeHtml(alert.search_terms)}</strong> in ${period}.</p><ul style="padding-left:20px">${articleHtml}</ul>${moreText}<hr style="border:0;border-top:1px solid #e2e8f0;margin:24px 0"><p style="font-size:12px;color:#475569">To stop these alerts, <a href="${unsubscribeUrl}" style="color:#b91c1c">unsubscribe here</a>.</p></div></div>`;
-  const text = `${totalCount} article${totalCount === 1 ? "" : "s"} matched "${alert.search_terms}" in ${period}.\n\n${articleText}${morePlainText}\n\nUnsubscribe: ${unsubscribeUrl}`;
+  const html = `<div style="font-family:Arial,'Microsoft YaHei',sans-serif;color:#171717;line-height:1.6;max-width:640px;margin:0 auto;background:#f8fafc"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#b91c1c;border-bottom:3px solid #fbbf24"><tr><td style="padding:21px 16px 21px 22px;text-align:left"><h1 style="margin:0;color:#fcd34d;font-family:'Microsoft YaHei','Noto Sans CJK SC',Arial,sans-serif;font-size:39px;line-height:1.3;font-weight:700">中国来信</h1><p style="margin:5px 0 0;color:#fde68a;font-size:14.3px;font-weight:700;letter-spacing:1px">${formatEmailDate(now)}</p></td><td width="110" align="right" valign="middle" style="padding:8px 18px 8px 0"><img src="${imageUrl}" alt="Portrait of Mao Zedong" width="90" height="108" style="display:block;width:90px;height:108px;object-fit:cover"></td></tr></table><div style="padding:20px 22px;background:#fff"><p>${summary}</p><ul style="padding-left:20px">${articleHtml}</ul><p><a href="${escapeHtml(archiveUrl.toString())}" style="color:#b91c1c">View matching articles in the archive</a>.</p><hr style="border:0;border-top:1px solid #e2e8f0;margin:24px 0"><p style="font-size:12px;color:#475569">To stop these alerts, <a href="${unsubscribeUrl}" style="color:#b91c1c">unsubscribe here</a>.</p></div></div>`;
+  const text = `${summary}\n\n${articleText}\n\nView matching articles in the archive: ${archiveUrl}\n\nUnsubscribe: ${unsubscribeUrl}`;
 
   const response = await fetch("https://api.resend.com/emails", {
     method: "POST",
@@ -178,7 +186,7 @@ async function sendAlert(alert: DueAlert, now: Date, siteUrl: string) {
     body: JSON.stringify({
       from: process.env.ALERTS_FROM_EMAIL,
       to: confirmedEmails,
-      subject: `Chinese News Archive: ${totalCount} alert match${totalCount === 1 ? "" : "es"}`,
+      subject: `中国来信: ${searchTerms(searchExpression).join(", ")}`,
       html,
       text,
     }),

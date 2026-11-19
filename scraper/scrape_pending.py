@@ -9,7 +9,6 @@ from .adapters.bjnews import BjnewsAdapter
 from .adapters.cankaoxiaoxi import CankaoxiaoxiAdapter
 from .adapters.gmw import GmwAdapter
 from .adapters.people import PeopleAdapter
-from .adapters.xinhua import XinhuaAdapter
 from .rss_discovery import (
     ARTICLE_USER_AGENT,
     BJNEWS_ARTICLE_USER_AGENT,
@@ -27,7 +26,6 @@ SOURCE_ADAPTERS = {
     "people": (PeopleAdapter, ARTICLE_USER_AGENT, alternate_people_domain_url),
     "bjnews": (BjnewsAdapter, BJNEWS_ARTICLE_USER_AGENT, None),
     "gmw": (GmwAdapter, GmwAdapter.USER_AGENT, None),
-    "xinhua": (XinhuaAdapter, XinhuaAdapter.USER_AGENT, None),
     "cankaoxiaoxi": (
         CankaoxiaoxiAdapter,
         CankaoxiaoxiAdapter.USER_AGENT,
@@ -48,7 +46,7 @@ def main(source: str = "people") -> int:
             raise ValueError(f"Unsupported extraction source: {source}") from error
 
         supabase = SupabaseRest()
-        if source in ("xinhua", "cankaoxiaoxi"):
+        if source == "cankaoxiaoxi":
             records = supabase.find_pending_records(MAX_RECORDS, source, "search")
         else:
             records = supabase.find_pending_records(MAX_RECORDS, source)
@@ -103,9 +101,7 @@ def main(source: str = "people") -> int:
                 f"{stats.failed} failed, {stats.restricted} restricted."
             )
 
-        if source == "xinhua":
-            adapter = XinhuaAdapter(delay_seconds=0, user_agent=user_agent, follow_redirects=False)
-        elif source == "cankaoxiaoxi":
+        if source == "cankaoxiaoxi":
             adapter = CankaoxiaoxiAdapter(
                 delay_seconds=0, user_agent=user_agent, follow_redirects=False
             )

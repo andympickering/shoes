@@ -20,6 +20,8 @@ function loadTypeScript(relativePath, dependencies = {}) {
 }
 
 const articleSearch = loadTypeScript("lib/article-search.ts");
+const archiveFilters = loadTypeScript("lib/archive-filters.ts");
+const sourceLabel = loadTypeScript("lib/source-label.ts");
 const validation = loadTypeScript("lib/alert-validation.ts", {
   "@/lib/article-search": articleSearch,
 });
@@ -45,6 +47,26 @@ test("validates the article limit as an integer from 1 to 100", () => {
   for (const maxArticles of [undefined, null, "", "25", 0, -1, 1.5, 101]) {
     assert.match(validation.validateAlertSettings({ ...settings, maxArticles }).error, /whole number between 1 and 100/);
   }
+});
+
+test("archive links initialize only the search and date filters", () => {
+  const params = new URLSearchParams({
+    headline: '"trade & industry" AND china',
+    publishedFrom: "2026-01-02",
+    publishedTo: "2026-01-02",
+    source: "people",
+    headlineOnly: "true",
+  });
+  assert.deepEqual(archiveFilters.archiveFiltersFromSearchParams(params), {
+    headline: '"trade & industry" AND china',
+    publishedFrom: "2026-01-02",
+    publishedTo: "2026-01-02",
+    source: "",
+    headlineOnly: false,
+  });
+  assert.deepEqual(archiveFilters.archiveFiltersFromSearchParams(new URLSearchParams()), {
+    headline: "", publishedFrom: "", publishedTo: "", source: "", headlineOnly: false,
+  });
 });
 
 test("creation and editing persist the selected article limit", async () => {
@@ -115,7 +137,7 @@ test("delivery searches and renders no more than each alert's configured limit",
       const expectedArticles = Math.min(limit, total);
       const results = Array.from({ length: expectedArticles }, (_, index) => ({
         id: String(index),
-        source: "Source",
+        source: ["people", "bjnews", "xinhua", "cankaoxiaoxi", "gmw", "Other"][index % 6],
         headline: `Headline ${index}`,
         display_date: "2026-01-01",
         total_count: total,
@@ -123,7 +145,7 @@ test("delivery searches and renders no more than each alert's configured limit",
       const alert = {
         subscription_id: "alert",
         unsubscribe_token: "token",
-        search_terms: "china",
+        search_terms: '"trade & industry" AND (china OR "rock and roll")',
         time_span: "last_week",
         frequency: "daily",
         schedule_day: 1,
@@ -170,6 +192,7 @@ test("delivery searches and renders no more than each alert's configured limit",
         "@/lib/article-search": articleSearch,
         "@/lib/alert-schedule": schedule,
         "@/lib/supabase-admin": { supabaseAdmin: admin },
+        "@/lib/source-label": sourceLabel,
       });
       const response = await route.POST({ headers: new Headers({ authorization: "Bearer test-secret" }) });
       assert.deepEqual(response.body, { processed: 1, sent: total > 0 && hasConfirmed ? 1 : 0 });
@@ -181,10 +204,36 @@ test("delivery searches and renders no more than each alert's configured limit",
       assert.deepEqual(email.to, ["reader@example.com"]);
       assert.equal((email.html.match(/<li /g) ?? []).length, expectedArticles);
       assert.equal((email.text.match(/^- Headline /gm) ?? []).length, expectedArticles);
-      if (total > limit) {
-        assert.match(email.text, new RegExp(`Showing ${limit} of ${total} matching articles`));
-      } else {
-        assert.doesNotMatch(email.text, /Showing .* matching articles/);
+      assert.equal(email.subject, "中国来信: trade & industry, china, rock and roll");
+      assert.match(email.html, />中国来信<\/h1>/);
+      const archiveLink = email.text.match(/View matching articles in the archive: (https:\/\/\S+)/);
+      assert.ok(archiveLink);
+      const url = new URL(archiveLink[1]);
+      assert.equal(url.origin + url.pathname, "https://example.com/");
+      assert.equal(url.searchParams.get("headline"), alert.search_terms);
+      const date = url.searchParams.get("publishedFrom");
+      assert.match(date, /^\d{4}-\d{2}-\d{2}$/);
+      assert.equal(url.searchParams.get("publishedTo"), date);
+      assert.deepEqual([...url.searchParams.keys()], ["headline", "publishedFrom", "publishedTo"]);
+      assert.deepEqual(archiveFilters.archiveFiltersFromSearchParams(url.searchParams), {
+        headline: alert.search_terms,
+        publishedFrom: date,
+        publishedTo: date,
+        source: "",
+        headlineOnly: false,
+      });
+      const formattedDate = new Intl.DateTimeFormat("en-GB", {
+        day: "2-digit", month: "short", year: "numeric", timeZone: "UTC",
+      }).format(new Date(`${date}T00:00:00Z`)).replace(/ /g, "-");
+      const summary = `Top ${limit} of ${total} articles from ${formattedDate}`;
+      assert.ok(email.text.startsWith(summary));
+      assert.ok(email.html.includes(`<p>${summary}</p>`));
+      assert.ok(email.html.includes(`>${formattedDate}</p>`));
+      assert.ok(email.html.includes(`href="${archiveLink[1].replace(/&/g, "&amp;")}"`));
+      for (const [index, label] of ["People's Daily", "BeijingNews", "Xinhua", "Cankaoxiaoxi", "Guangming Daily", "Other"].entries()) {
+        if (index >= expectedArticles) break;
+        assert.ok(email.text.includes(`Headline ${index} (${label},`));
+        assert.ok(email.html.includes(label.replace(/'/g, "&#39;")));
       }
     }
   } finally {

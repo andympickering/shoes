@@ -35,13 +35,6 @@ class ScrapePendingTests(unittest.TestCase):
             "eq.bjnews",
         )
 
-    def test_selects_xinhua_search_records(self):
-        supabase = MagicMock(spec=SupabaseRest)
-        SupabaseRest.find_pending_records(supabase, MAX_RECORDS, "xinhua", "search")
-        self.assertEqual(
-            supabase.request.call_args.kwargs["params"]["discovery_method"], "eq.search"
-        )
-
     @patch("scraper.scrape_pending.SupabaseRest")
     def test_completes_batch_with_record_failures_and_updates_progress(
         self, supabase_factory
@@ -150,21 +143,10 @@ class ScrapePendingTests(unittest.TestCase):
             "CHNscraping article extraction; contact repository owner",
         )
 
-    @patch("scraper.scrape_pending.process_discoveries")
     @patch("scraper.scrape_pending.SupabaseRest")
-    def test_runs_xinhua_search_extraction(self, supabase_factory, process_records):
-        supabase = MagicMock()
-        supabase.find_pending_records.return_value = [
-            {"id": "record", "discovered_url": "https://www.news.cn/a.html"}
-        ]
-        supabase.request.return_value = [{"id": "job"}]
-        supabase_factory.return_value = supabase
-        process_records.return_value = ProcessStats(extracted=1)
-        self.assertEqual(main("xinhua"), 0)
-        supabase.find_pending_records.assert_called_once_with(MAX_RECORDS, "xinhua", "search")
-        self.assertEqual(process_records.call_args.args[2].source_id, "xinhua")
-        self.assertFalse(process_records.call_args.args[2].follow_redirects)
-        self.assertIsNone(process_records.call_args.kwargs["alternate_url_for"])
+    def test_rejects_disabled_xinhua_without_connecting(self, supabase_factory):
+        self.assertEqual(main("xinhua"), 1)
+        supabase_factory.assert_not_called()
 
     @patch("scraper.scrape_pending.process_discoveries")
     @patch("scraper.scrape_pending.SupabaseRest")
