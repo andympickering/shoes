@@ -286,7 +286,7 @@ export default function Home() {
               {articles.map((article) => (
                 <tr key={article.id} className="align-top transition-colors hover:bg-red-50/70 dark:hover:bg-red-950/30">
                   <td className="whitespace-nowrap px-3 py-3 font-mono text-xs tabular-nums text-slate-500 dark:text-slate-400">
-                    {filters.headline.trim() ? article.relevance_score : ""}
+                    {filters.headline.trim() ? article.relevance_score.toFixed(2) : ""}
                   </td>
                   <td className="break-words px-3 py-3 text-sm font-medium leading-6">
                     <a
