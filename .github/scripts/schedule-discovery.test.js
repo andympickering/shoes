@@ -11,7 +11,7 @@ function setup(activeStatus = null) {
     dispatches,
     get historyRequests() { return historyRequests; },
     options: {
-      env: { SOURCE: "people", WORKFLOW: "people-sitemap.yml" },
+      env: { SOURCE: "people", WORKFLOW: "people-sitemap.yml", DISPATCH_TOKEN: "test-token" },
       context: { repo: { owner: "owner", repo: "repo" }, ref: "refs/heads/main" },
       core: { info: () => {} },
       fetch: async () => {
@@ -55,6 +55,19 @@ test("surfaces GitHub errors instead of dispatching", async () => {
   };
   await assert.rejects(scheduleDiscovery(state.options), /GitHub unavailable/);
   assert.equal(state.dispatches.length, 0);
+});
+
+test("does not dispatch when the personal access token is missing", async () => {
+  const state = setup();
+  delete state.options.env.DISPATCH_TOKEN;
+  await assert.rejects(scheduleDiscovery(state.options), /Missing DISCOVERY_DISPATCH_TOKEN repository secret/);
+  assert.equal(state.dispatches.length, 0);
+});
+
+test("scheduler authenticates GitHub API calls with the dispatch secret", () => {
+  const workflow = readFileSync(join(__dirname, "..", "workflows", "discovery-scheduler.yml"), "utf8");
+  assert.match(workflow, /github-token:\s*\$\{\{\s*secrets\.DISCOVERY_DISPATCH_TOKEN\s*\}\}/);
+  assert.match(workflow, /DISPATCH_TOKEN:\s*\$\{\{\s*secrets\.DISCOVERY_DISPATCH_TOKEN\s*\}\}/);
 });
 
 test("discovery workflows do not enforce a crawl interval", () => {

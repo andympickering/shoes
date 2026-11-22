@@ -4,7 +4,6 @@ on:
   workflow_dispatch:
 
 permissions:
-  actions: write
   contents: read
 
 jobs:
@@ -32,7 +31,9 @@ jobs:
         env:
           SOURCE: ${{ matrix.source }}
           WORKFLOW: ${{ matrix.workflow }}
+          DISPATCH_TOKEN: ${{ secrets.DISCOVERY_DISPATCH_TOKEN }}
         with:
+          github-token: ${{ secrets.DISCOVERY_DISPATCH_TOKEN }}
           script: |
             const schedule = require('./.github/scripts/schedule-discovery.js');
             await schedule({ github, context, core, env: process.env });

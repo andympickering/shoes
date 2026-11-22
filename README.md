@@ -51,11 +51,15 @@ Before applying `supabase/migrations/015_supabase_discovery_schedule.sql`:
 2. Store it in Supabase Vault under the name
    `github_actions_dispatch_token`. Do not put the token in this repository or
    in the migration.
-3. Apply `015_supabase_discovery_schedule.sql` to the Supabase project. It
+3. Store the same token (or another repository-scoped token with **Actions:
+   write**) as the GitHub Actions repository secret `DISCOVERY_DISPATCH_TOKEN`.
+   The scheduler uses this token to dispatch the discovery workflows so their
+   completion can trigger article extraction. Without it, scheduling fails.
+4. Apply `015_supabase_discovery_schedule.sql` to the Supabase project. It
    installs the extensions and schedules the daily HTTP dispatch to `master`.
-4. Apply `016_reschedule_discovery_dispatch.sql` to set the existing job to
+5. Apply `016_reschedule_discovery_dispatch.sql` to set the existing job to
    12:47 UTC.
-5. Apply `018_reschedule_discovery_dispatch.sql` to update it to 16:03 UTC.
+6. Apply `018_reschedule_discovery_dispatch.sql` to update it to 16:03 UTC.
 
 If the 015 migration was already applied and the cron job is installed, apply
 the remaining migrations in order; do not rerun 015.
@@ -69,7 +73,7 @@ To confirm the job is installed, query `cron.job` for
 `net._http_response`; a successful workflow dispatch returns HTTP 204.
 Confirm `show cron.timezone;` reports `GMT` or `UTC` so the run occurs at the
 intended UTC time.
-Rotate the Vault token before its GitHub expiration.
+Rotate both stored copies before their GitHub token expires.
 
 The workflow remains manually runnable through GitHub Actions' **Run workflow**
 button.

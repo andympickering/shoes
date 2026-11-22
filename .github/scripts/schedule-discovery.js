@@ -1,9 +1,12 @@
 const ACTIVE_STATUSES = ["queued", "in_progress", "requested", "waiting", "pending"];
 
 async function scheduleDiscovery({ github, context, core, env }) {
-  const { SOURCE, WORKFLOW } = env;
+  const { SOURCE, WORKFLOW, DISPATCH_TOKEN } = env;
   if (!SOURCE || !WORKFLOW) {
     throw new Error("Missing discovery scheduler configuration");
+  }
+  if (!DISPATCH_TOKEN) {
+    throw new Error("Missing DISCOVERY_DISPATCH_TOKEN repository secret");
   }
 
   for (const status of ACTIVE_STATUSES) {
