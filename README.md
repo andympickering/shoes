@@ -40,9 +40,9 @@ python -m scraper.scrape_pending --source cankaoxiaoxi
 ## Discovery scheduling
 
 Supabase Cron dispatches `.github/workflows/discovery-scheduler.yml` daily at
-12:47 UTC. GitHub Actions still runs the discovery workflows and scrapers; only
-the timer is hosted by Supabase. The scheduler checks recent crawl history and
-active workflow runs before dispatching each due discovery.
+16:03 UTC. GitHub Actions still runs the discovery workflows and scrapers; only
+the timer is hosted by Supabase. The scheduler dispatches each discovery unless
+its workflow already has an active run.
 
 Before applying `supabase/migrations/015_supabase_discovery_schedule.sql`:
 
@@ -55,9 +55,10 @@ Before applying `supabase/migrations/015_supabase_discovery_schedule.sql`:
    installs the extensions and schedules the daily HTTP dispatch to `master`.
 4. Apply `016_reschedule_discovery_dispatch.sql` to set the existing job to
    12:47 UTC.
+5. Apply `018_reschedule_discovery_dispatch.sql` to update it to 16:03 UTC.
 
 If the 015 migration was already applied and the cron job is installed, apply
-only migration 016; do not rerun 015.
+the remaining migrations in order; do not rerun 015.
 
 The migration requires Supabase's `pg_cron`, `pg_net`, and Vault extensions.
 It also revokes `anon` and `authenticated` access to `pg_net`'s request and

@@ -16,16 +16,12 @@ jobs:
       matrix:
         include:
           - source: people
-            job_type: weekly
             workflow: people-sitemap.yml
           - source: bjnews
-            job_type: daily
             workflow: bjnews-sitemap.yml
           - source: gmw
-            job_type: daily
             workflow: gmw-sitemap.yml
           - source: cankaoxiaoxi
-            job_type: daily
             workflow: cankaoxiaoxi-search.yml
     concurrency:
       group: discovery-scheduler-${{ matrix.source }}
@@ -34,12 +30,9 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/github-script@v7
         env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
           SOURCE: ${{ matrix.source }}
-          JOB_TYPE: ${{ matrix.job_type }}
           WORKFLOW: ${{ matrix.workflow }}
         with:
           script: |
             const schedule = require('./.github/scripts/schedule-discovery.js');
-            await schedule({ github, context, core, env: process.env, fetch });
+            await schedule({ github, context, core, env: process.env });
